@@ -27,6 +27,7 @@ dependencies = [
     "spacy>=3.7.0",
     "networkx>=3.2",
     "ollama>=0.3.0",
+    "kg-common>=0.0.1",
 ]
 
 [project.optional-dependencies]

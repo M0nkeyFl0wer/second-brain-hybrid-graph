@@ -216,3 +216,12 @@ def node_type_prompt_fragment() -> str:
         ex = examples.get(ntype, "")
         lines.append(f"  - {ntype}: {ex}" if ex else f"  - {ntype}")
     return "\n".join(lines)
+
+
+# Backward-compat alias. The legacy `Ontology` class referenced from 11
+# callsites was removed from this module at some point but the imports
+# never got updated. `SecondBrainOntology` is the kg-common Ontology ABC
+# subclass that replaces it. This single line repairs every broken-import
+# site without touching the callers. See PLAN.md Phase 5.2 and the memory
+# entry `project_open_second_brain_broken_imports.md`.
+from second_brain.ontology_kg_common import SecondBrainOntology as Ontology  # noqa: E402, F401
