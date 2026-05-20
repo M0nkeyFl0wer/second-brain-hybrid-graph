@@ -1,3 +1,11 @@
+---
+status: in-progress
+done_at: ~
+verified_by: ~
+canonical: true
+next_step: Build `scripts/onboard.py` (interactive edge-type selection) and `scripts/smoke_test.py`; then symlink hooks/ from agentic-rag-harness.
+---
+
 # open-second-brain → Hybrid Stack + Harness Implementation Plan
 
 **Date**: 2026-05-03
