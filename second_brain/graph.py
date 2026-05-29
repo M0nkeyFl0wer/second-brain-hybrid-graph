@@ -129,6 +129,7 @@ class Graph:
                     edge_type STRING DEFAULT '',
                     weight DOUBLE DEFAULT 1.0,
                     confidence DOUBLE DEFAULT 0.5,
+                    evidence STRING DEFAULT '',
                     source_url STRING DEFAULT '',
                     provenance STRING DEFAULT 'unknown',
                     created_at INT64 DEFAULT 0,
@@ -216,8 +217,15 @@ class Graph:
 
     def add_edge(self, source_id: str, target_id: str, edge_type: str,
                  weight: float = 1.0, confidence: float = 0.5,
-                 source_url: str = "", provenance: str = "unknown") -> bool:
-        """Add a typed edge between two entities."""
+                 evidence: str = "", source_url: str = "",
+                 provenance: str = "unknown") -> bool:
+        """Add a typed edge between two entities.
+
+        `evidence` is the verbatim source quote justifying the edge — the
+        ontology requires it on every extracted relationship. Persisting it
+        keeps edges traceable back to their text (otherwise the graph asserts
+        relationships with no record of why).
+        """
         if not self.ontology.validate_edge_type(edge_type):
             return False
 
@@ -225,11 +233,11 @@ class Graph:
             MATCH (a:Entity {id: $src}), (b:Entity {id: $tgt})
             MERGE (a)-[r:RELATES_TO {edge_type: $etype}]->(b)
             ON CREATE SET r.weight = $w, r.confidence = $conf,
-                r.source_url = $url, r.provenance = $prov,
+                r.evidence = $ev, r.source_url = $url, r.provenance = $prov,
                 r.created_at = $now
         """, parameters={
             "src": source_id, "tgt": target_id, "etype": edge_type,
-            "w": weight, "conf": confidence,
+            "w": weight, "conf": confidence, "ev": evidence,
             "url": source_url, "prov": provenance, "now": int(time.time()),
         })
         return True
@@ -312,7 +320,8 @@ class Graph:
         Load edges via parameterized MERGE (iterative, not bulk Parquet).
         COPY FROM for rel tables requires exact internal ID format, so we
         use MERGE for correctness. Each dict must have: source_id, target_id,
-        edge_type. Optional: weight, confidence, source_url, provenance, created_at.
+        edge_type. Optional: weight, confidence, evidence, source_url,
+        provenance, created_at.
         All validated against ontology before loading.
         """
         valid = [e for e in edges
@@ -333,7 +342,7 @@ class Graph:
                 MATCH (a:Entity {id: $src}), (b:Entity {id: $tgt})
                 MERGE (a)-[r:RELATES_TO {edge_type: $etype}]->(b)
                 ON CREATE SET r.weight = $w, r.confidence = $conf,
-                    r.source_url = $url, r.provenance = $prov,
+                    r.evidence = $ev, r.source_url = $url, r.provenance = $prov,
                     r.created_at = $now
             """, parameters={
                 "src": e.get("source_id", ""),
@@ -341,6 +350,7 @@ class Graph:
                 "etype": e["edge_type"],
                 "w": e.get("weight", 1.0),
                 "conf": e.get("confidence", 0.5),
+                "ev": e.get("evidence", ""),
                 "url": e.get("source_url", ""),
                 "prov": e.get("provenance", "unknown"),
                 "now": e.get("created_at", now),
