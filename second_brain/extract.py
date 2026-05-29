@@ -36,33 +36,12 @@ DEFAULT_NODE_TYPES = [
 ]
 
 
-def extract_triplets_from_text(
-    text: str,
-    edge_types: list[str],
-    model: str = DEFAULT_MODEL,
-    host: str = DEFAULT_HOST,
-    max_tokens: int = 2048,
-    node_types: list[str] | None = None,
-) -> dict[str, Any]:
-    """
-    Extract triplets from a text chunk using Ollama LLM.
-
-    Args:
-        text: the note chunk text to analyze
-        edge_types: list of edge types to extract (from config)
-        model: Ollama model name
-        host: Ollama host URL
-        max_tokens: max tokens for LLM response
-
-    Returns:
-        dict with "entities" and "edges" lists
-    """
-    if not text or len(text.strip()) < 20:
-        return {"entities": [], "edges": []}
-
-    node_types = node_types or DEFAULT_NODE_TYPES
-
-    prompt = f"""Extract triplets (subject, relationship, object) from the following text.
+def _build_extraction_prompt(
+    text: str, edge_types: list[str], node_types: list[str],
+) -> str:
+    """The triplet-extraction prompt, shared by the local (Ollama) and remote
+    (OpenAI-compatible) backends so both ask for exactly the same thing."""
+    return f"""Extract triplets (subject, relationship, object) from the following text.
 
 For each relationship found, return:
 - source entity label
@@ -95,6 +74,35 @@ Text to analyze:
 ---
 
 JSON response:"""
+
+
+def extract_triplets_from_text(
+    text: str,
+    edge_types: list[str],
+    model: str = DEFAULT_MODEL,
+    host: str = DEFAULT_HOST,
+    max_tokens: int = 2048,
+    node_types: list[str] | None = None,
+) -> dict[str, Any]:
+    """
+    Extract triplets from a text chunk using Ollama LLM.
+
+    Args:
+        text: the note chunk text to analyze
+        edge_types: list of edge types to extract (from config)
+        model: Ollama model name
+        host: Ollama host URL
+        max_tokens: max tokens for LLM response
+
+    Returns:
+        dict with "entities" and "edges" lists
+    """
+    if not text or len(text.strip()) < 20:
+        return {"entities": [], "edges": []}
+
+    node_types = node_types or DEFAULT_NODE_TYPES
+
+    prompt = _build_extraction_prompt(text, edge_types, node_types)
 
     payload = {
         "model": model,
@@ -131,6 +139,65 @@ JSON response:"""
         # 2026-05-28: an 85-min ingest produced 142 entities / 0 edges
         # because every extraction call timed out and was silently dropped.
         logger.warning("extract_triplets failed (model=%s): %s", model, ex)
+        return {"entities": [], "edges": [], "_error": str(ex)}
+
+
+def extract_triplets_openai(
+    text: str,
+    edge_types: list[str],
+    model: str,
+    api_base: str,
+    api_key: str,
+    max_tokens: int = 2048,
+    node_types: list[str] | None = None,
+    timeout: int = TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """Extract triplets via an OpenAI-compatible /v1/chat/completions endpoint.
+
+    Backend-agnostic: works with any OpenAI-compatible server ([vendor],
+    Together, Groq, vLLM, a local OpenAI-shim, etc.). Selected when
+    PRIVACY_MODE is "hybrid"/"remote" and a remote base is configured — the
+    extraction (not embedding) leaves the machine. Same prompt and same
+    fail-loud `_error` contract as the local path.
+    """
+    if not text or len(text.strip()) < 20:
+        return {"entities": [], "edges": []}
+
+    node_types = node_types or DEFAULT_NODE_TYPES
+    prompt = _build_extraction_prompt(text, edge_types, node_types)
+
+    base = api_base.rstrip("/")
+    # Accept either a bare host ("https://api.example.ai") or one that already
+    # includes the /v1 prefix.
+    url = base + ("/chat/completions" if base.endswith("/v1") else "/v1/chat/completions")
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": max_tokens,
+    }
+
+    try:
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        # OpenAI-compatible: choices[0].message.content holds the model output.
+        choices = result.get("choices") or []
+        content = (choices[0].get("message", {}).get("content", "") if choices else "").strip()
+        return _parse_json_response(content)
+    except Exception as ex:
+        # Same fail-loud contract as the local path: surface the error so the
+        # ingest refuses to declare success on a degraded/unauthorized backend.
+        logger.warning("extract_triplets_openai failed (model=%s, base=%s): %s",
+                       model, base, ex)
         return {"entities": [], "edges": [], "_error": str(ex)}
 
 
@@ -224,19 +291,39 @@ class Extractor:
 
     def __init__(self, ontology, model: str | None = None, host: str | None = None):
         self.ontology = ontology
-        # Default to the project's configured LOCAL_EXTRACTION_MODEL (e.g.
-        # llama3.2:3b — fast), NOT extract.py's DEFAULT_MODEL (qwen3:14b — a
-        # 9GB model that makes ingestion crawl). Caller can override.
-        if model is None or host is None:
-            try:
-                from second_brain import config
-                model = model or getattr(config, "LOCAL_EXTRACTION_MODEL", DEFAULT_MODEL)
-                host = host or getattr(config, "OLLAMA_HOST", DEFAULT_HOST)
-            except Exception:
-                model = model or DEFAULT_MODEL
-                host = host or DEFAULT_HOST
-        self.model = model
-        self.host = host
+        try:
+            from second_brain import config
+        except Exception:
+            config = None
+
+        def _cfg(name, default=""):
+            return getattr(config, name, default) if config else default
+
+        # Backend selection mirrors config.PRIVACY_MODE:
+        #   "local"  -> Ollama (default; nothing leaves the machine)
+        #   "hybrid" -> embeddings local, EXTRACTION via remote OpenAI-compatible API
+        #   "remote" -> everything remote
+        # Each knob is env-overridable so a remote run needs no committed secret
+        # or URL. SECONDBRAIN_API_KEY is read from the environment only.
+        mode = os.environ.get("SECOND_BRAIN_PRIVACY_MODE") or _cfg("PRIVACY_MODE", "local")
+        remote_base = os.environ.get("REMOTE_API_BASE") or _cfg("REMOTE_API_BASE", "")
+        remote_model = os.environ.get("REMOTE_MODEL") or _cfg("REMOTE_MODEL", "")
+        api_key = os.environ.get("SECONDBRAIN_API_KEY", "")
+
+        if mode in ("hybrid", "remote") and remote_base and api_key:
+            self.backend = "openai"
+            self.remote_base = remote_base
+            self.remote_model = model or remote_model
+            self.api_key = api_key
+            self.model = self.remote_model
+            self.host = remote_base
+        else:
+            # Local Ollama. Default to LOCAL_EXTRACTION_MODEL (llama3.2:3b — fast),
+            # NOT extract.py's DEFAULT_MODEL (qwen3:14b, which crawls). Caller can override.
+            self.backend = "ollama"
+            self.model = model or _cfg("LOCAL_EXTRACTION_MODEL", DEFAULT_MODEL) or DEFAULT_MODEL
+            self.host = host or _cfg("OLLAMA_HOST", DEFAULT_HOST) or DEFAULT_HOST
+
         # Type vocabulary to constrain the LLM — pulled from the ontology so a
         # custom ontology actually drives extraction (entity types AND edges).
         self.edge_types = sorted(getattr(ontology, "EDGE_TYPES", []) or [])
@@ -254,10 +341,17 @@ class Extractor:
         the LLM's label references to entity ids; edges whose endpoints don't
         resolve are dropped (fail-soft).
         """
-        raw = extract_triplets_from_text(
-            text, self.edge_types, model=self.model, host=self.host,
-            node_types=self.node_types or None,
-        )
+        if self.backend == "openai":
+            raw = extract_triplets_openai(
+                text, self.edge_types, model=self.remote_model,
+                api_base=self.remote_base, api_key=self.api_key,
+                node_types=self.node_types or None,
+            )
+        else:
+            raw = extract_triplets_from_text(
+                text, self.edge_types, model=self.model, host=self.host,
+                node_types=self.node_types or None,
+            )
 
         label_to_id: dict[str, str] = {}
         entities: list[dict[str, Any]] = []

@@ -26,6 +26,10 @@ def main():
                         help="Re-ingest all notes (ignore existing)")
     parser.add_argument("--ontology", "-o", default=None,
                         help="Path to a YAML ontology (default: built-in SecondBrainOntology)")
+    parser.add_argument("--workers", "-w", type=int, default=1,
+                        help="Parallel extraction workers. 1 (default) is right "
+                             "for local Ollama (it serializes on one GPU); use "
+                             "8-16 for a remote OpenAI-compatible backend.")
     args = parser.parse_args()
 
     if not args.vault:
@@ -70,15 +74,33 @@ def main():
         t_start = time.time()
         extract_failures = 0  # extractions that errored (e.g. backend timeout)
 
-        for i, note in enumerate(notes, 1):
+        # --- Phase 1: extraction (parallelizable) -------------------------
+        # extract_from_text is pure (HTTP + parsing, no DB writes), so it's
+        # safe to run concurrently. This is a big win for REMOTE backends
+        # (OpenAI-compatible APIs serve concurrent requests, and the bottleneck
+        # is per-call latency, not local CPU). Local Ollama serializes on one
+        # GPU, so --workers>1 mainly helps the remote path. DB writes happen in
+        # Phase 2 on the main thread only (LadybugDB is single-writer).
+        def _extract(note):
+            return note, extractor.extract_from_text(
+                note["body"], source_url=note["path"], doc_id=note["doc_id"])
+
+        workers = max(1, args.workers)
+        if workers > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            print(f"Extracting {len(notes)} notes with {workers} parallel workers...")
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                extracted = list(pool.map(_extract, notes))
+        else:
+            extracted = [_extract(n) for n in notes]
+
+        # --- Phase 2: register docs + assemble (main thread, DB-touching) --
+        for i, (note, result) in enumerate(extracted, 1):
             print(f"[{i}/{len(notes)}] {note['relative_path']}")
 
             # Register document
             graph.add_document(note["doc_id"], note["path"], note["title"])
 
-            # Run extraction on body text
-            result = extractor.extract_from_text(
-                note["body"], source_url=note["path"], doc_id=note["doc_id"])
             if result.get("_error"):
                 extract_failures += 1
                 print(f"  ⚠ extraction FAILED: {result['_error']}")
