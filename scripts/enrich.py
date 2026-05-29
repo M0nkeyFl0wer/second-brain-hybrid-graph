@@ -24,13 +24,34 @@ from typing import Any
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from second_brain.chunk_store import ChunkStore
-from second_brain.graph import GraphWriter, PipelineError
-from second_brain.ontology import (
-    slugify,
-    validate_edge,
-)
-from second_brain.extract import extract_triplets_from_text
+# ---------------------------------------------------------------------------
+# EXPERIMENTAL STAGE — the DuckDB-hybrid enrichment loop.
+#
+# This is the "enrichment" feedback loop of the pipeline (chunk -> embed ->
+# extract -> graph, with chunks/embeddings in DuckDB). It is NOT part of the
+# minimum working core (ingest -> graph -> query/viz). It is currently stale
+# against the consolidated `Graph` API: it was written for an older
+# `GraphWriter` (write_entity / write_edge / init_schema / checkpoint) +
+# `PipelineError` interface that the refactor renamed/removed. Reconciling it
+# (and unifying its DB paths — brain.ldb / chunks.duckdb — with the core's
+# config.GRAPH_DIR) is tracked work. Until then it fails loud and honest
+# rather than with a raw ImportError. See README "Pipeline maturity".
+# ---------------------------------------------------------------------------
+try:
+    from second_brain.chunk_store import ChunkStore
+    from second_brain.graph import GraphWriter, PipelineError  # not on Graph yet
+    from second_brain.ontology import slugify, validate_edge
+    from second_brain.extract import extract_triplets_from_text
+except ImportError as _exc:
+    sys.stderr.write(
+        "\n[experimental] scripts/enrich.py — the DuckDB-hybrid enrichment loop "
+        "is not yet reconciled to the current Graph API and cannot run.\n"
+        f"  ({_exc})\n"
+        "  The working pipeline is: ingest_obsidian.py -> graph -> "
+        "check.py / search_cli.py / visualize.py.\n"
+        "  See the README 'Pipeline maturity' section.\n\n"
+    )
+    sys.exit(2)
 
 VAULT_PATH = Path.home() / "obsidian-vault"
 DATA_DIR = Path(__file__).parent.parent / "data"

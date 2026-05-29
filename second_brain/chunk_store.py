@@ -58,16 +58,16 @@ class ChunkStore:
         self.db_path = Path(db_path)
         self.read_only = read_only
         self.embedding_dim = embedding_dim
-        self._ro: Optional[duckdb.DuckDB] = None
-        self._mem: Optional[duckdb.DuckDB] = None
+        self._ro: Optional[duckdb.DuckDBPyConnection] = None
+        self._mem: Optional[duckdb.DuckDBPyConnection] = None
 
-    def _open_ro(self) -> duckdb.DuckDB:
+    def _open_ro(self) -> duckdb.DuckDBPyConnection:
         """Open read-only persistent handle for FTS queries."""
         if self._ro is None:
             self._ro = duckdb.connect(str(self.db_path), read_only=True)
         return self._ro
 
-    def _open_mem(self) -> duckdb.DuckDB:
+    def _open_mem(self) -> duckdb.DuckDBPyConnection:
         """Open in-memory handle for HNSW queries (built from on-disk data at boot)."""
         if self._mem is None:
             self._mem = duckdb.connect(":memory:")
@@ -89,7 +89,7 @@ class ChunkStore:
             self._mem.execute("DETACH disk;")
         return self._mem
 
-    def _open_rw(self) -> duckdb.DuckDB:
+    def _open_rw(self) -> duckdb.DuckDBPyConnection:
         """Open read-write handle for writer process."""
         return duckdb.connect(str(self.db_path), read_only=False)
 
@@ -232,7 +232,7 @@ class ChunkStore:
 
     def _copy_rows_to_chunk_table(
         self,
-        rw: duckdb.DuckDB,
+        rw: duckdb.DuckDBPyConnection,
         rows: list[dict[str, Any]],
     ) -> None:
         """

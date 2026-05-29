@@ -13,7 +13,9 @@ paths and native graph algorithms, not Python loops.
 
 from typing import Any, Optional
 
-from second_brain.graph import GraphReader
+# `GraphReader` never existed as a class — another refactor-orphan import.
+# `Graph` provides the read API path_finder uses (.query / .close), so alias it.
+from second_brain.graph import Graph as GraphReader
 
 
 class PathFinder:

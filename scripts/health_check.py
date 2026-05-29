@@ -27,8 +27,21 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from second_brain.chunk_store import ChunkStore
-from second_brain.graph import GraphReader
+# EXPERIMENTAL STAGE — ops monitoring for the DuckDB-hybrid path. Stale against
+# the consolidated Graph API (expects GraphReader.get_stats / ChunkStore.get_stats
+# + the brain.ldb / chunks.duckdb layout). Reconciled alongside enrich.py.
+# Fails honest rather than with a raw ImportError. See README "Pipeline maturity".
+try:
+    from second_brain.chunk_store import ChunkStore
+    from second_brain.graph import GraphReader
+except ImportError as _exc:
+    sys.stderr.write(
+        "\n[experimental] scripts/health_check.py monitors the DuckDB-hybrid "
+        "stage, which is not yet reconciled to the current Graph API.\n"
+        f"  ({_exc})\n"
+        "  For the core pipeline, use: python -m second_brain.check\n\n"
+    )
+    sys.exit(2)
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 CHUNK_STORE_PATH = DATA_DIR / "chunks.duckdb"

@@ -1,721 +1,164 @@
-# Personal Knowledge Graph Infrastructure
+<img src="static/logo.png" alt="Second Brain — Hybrid Graph" width="400">
 
-<img src="static/logo.png" alt="Personal Knowledge Graph" width="400">
+# Second Brain — Hybrid Graph
 
-A set of tools I've been using and sharing — assembled from personal experimentation and client work organizing hybrid knowledge graphs in various forms.
+My homelab stack for a **hybrid graph-RAG second brain**: the personal attempts
+at each stage of moving notes from *flat vector search* to *graph traversal* —
+where a query doesn't just return the nearest chunks, it walks the typed
+relationships between the ideas behind them.
 
-It covers the full stack in one place:
+It is **local-first and zero-daemon**. Two embedded databases do the work:
 
-- **Ontology design** — entity types, edge types, and what to track
-- **Ingestion flows** — getting notes and documents into the graph
-- **Embeddings** — local via Ollama, or plug in Claude/OpenAI/etc.
-- **Chunking** — splitting content into meaningful units
-- **Vector search** — HNSW indexes for semantic retrieval
-- **Triplet extraction** — pulling entity-relationship-entity facts from raw text
-- **Graph enrichment** — scheduled passes that grow the graph automatically
-- **Discovery** — finding hidden connections and structural gaps
+- **DuckDB** — chunks, embeddings, and full-text search (BM25 + HNSW, fused with
+  Reciprocal Rank Fusion). The retrieval substrate.
+- **LadybugDB** — the typed-edge graph: entities and the evidence-bearing
+  relationships between them. The traversal substrate.
 
-Everything local-first. Works with an Obsidian vault, any folder of documents, or starting from scratch.
+Plus **Ollama** (local extraction + embeddings) and **NetworkX / Ripser** (graph
+analysis). No server to run, no cloud, no API keys required.
 
-**Built with:** LadybugDB, DuckDB, Ollama, NetworkX. All open source.
-
----
-
-**Getting started:**
-
-```bash
-git clone https://github.com/M0nkeyFl0wer/second-brain-open-kg.git
-cd second-brain-open-kg
-bash setup.sh
-```
-
-Then point it at your vault, your documents, or nothing (onboarding helps you figure out where to start).
+> This is a personal stack shared in the open, not a product. It is shown as a
+> **pipeline with feedback loops** — additions, pruning, pathfinding, and
+> enrichment — so you can take the stage you need and leave the rest. Some
+> stages run flawlessly today; some are works in progress. The
+> [Pipeline maturity](#pipeline-maturity) table is honest about which is which.
 
 ---
 
-Feedback and contributions always appreciated.
+## The pipeline
 
-## What This Does
+```
+        ┌─────────────────────────────────────────────────────────────┐
+        │                                                             ▼
+   sources ──▶ chunk ──▶ embed ──▶ extract triplets ──▶ typed graph ──▶ query / traverse / visualize
+   (vault,     (DuckDB)  (Ollama)  (entities + edges,    (LadybugDB)    (vector · keyword · hybrid · path)
+    folder)                         evidence-bearing)         │
+        ▲                                                     │
+        │            feedback loops                           │
+        └──── enrichment ◀── pruning ◀── pathfinding ◀────────┘
+              (grow it)     (clean it)   (connect it)
+```
 
-1. **Ingest** — your Obsidian vault, a folder of documents, or nothing at all
-2. **Extract** — entities and relationships from your content
-3. **Build** — a searchable graph with semantic embeddings
-4. **Discover** — hidden connections between ideas you never linked
-5. **Enrich** — automated passes that grow the graph over time
-6. **Reflect** — daily summaries of new ideas, contradictions, and gaps
+- **Additions** — ingest a vault, a folder, or nothing; new content flows in.
+- **Pathfinding** — find how two ideas connect across the graph, not just whether
+  they're similar.
+- **Pruning** — clean a live graph safely (the hard part: bulk deletes corrupt
+  LadybugDB's rel store — see [docs/STORAGE.md](docs/STORAGE.md)).
+- **Enrichment** — scheduled passes that re-read recent notes and grow the graph.
 
 ---
 
-## Quick Start
+## Pipeline maturity
 
-```bash
-git clone https://github.com/M0nkeyFl0wer/second-brain-open-kg.git
-cd second-brain-open-kg
-bash setup.sh
-```
+A tighter core that definitely works shares better than a broad stack that
+half-works. The **core** below is import-clean and schema-coherent; the
+**experimental** stages are real but still being reconciled (and some need a
+non-trivial local LLM run to exercise).
 
-**Then point it at your content:**
+| Stage | Entry point | Status |
+|---|---|---|
+| **Ingest** (vault / folder) | `scripts/ingest_obsidian.py`, `scripts/ingest_folder.py` | ✅ core |
+| **Typed graph** (LadybugDB) | `second_brain/graph.py` | ✅ core |
+| **Inspect** | `python -m second_brain.check` | ✅ core |
+| **Search** (vector / keyword / hybrid / path) | `scripts/search_cli.py` | ✅ core |
+| **Topology analysis** | `scripts/run_analysis.py`, `second_brain/topology.py` | ✅ core |
+| **Visualize** (NetworkX → pyvis + homology) | `scripts/visualize.py` | ✅ core |
+| **Pluggable ontology** (YAML) | `--ontology path.yaml` | ✅ core |
+| **Pathfinding** module | `second_brain/path_finder.py` | 🧪 experimental |
+| **Enrichment loop** (DuckDB-hybrid, scheduled) | `scripts/enrich.py` | 🧪 experimental¹ |
+| **Health/ops monitoring** | `scripts/health_check.py` | 🧪 experimental¹ |
+| **Daily briefing / reflection** | `scripts/daily_briefing.py` | 🧪 experimental |
+| **MCP server** (AI assistants) | `second_brain/mcp_server.py` | 🧪 experimental |
+| **Web dashboard** | `second_brain/dashboard.py` | 🧪 experimental |
 
-```bash
-# Obsidian vault
-python scripts/ingest_obsidian.py --vault ~/your-obsidian-vault
-
-# Any folder of documents
-python scripts/ingest_folder.py --dir ~/Documents/research
-
-# Or start from scratch — onboarding helps you figure out where to begin
-python scripts/onboard.py
-```
-
-Supports `.txt`, `.md`, `.pdf`, `.html`. PDFs need `pdftotext` (`sudo apt install poppler-utils` on Linux, `brew install poppler` on Mac).
-
-**Just want to see it work?** A small multi-domain demo corpus ships in the
-repo — 36 dog-domain notes (breed standards, vet research, municipal policy,
-journalism) deliberately shaped to surface cross-domain connections and a
-real contradiction. Ingest it in a minute:
-
-```bash
-python scripts/ingest_obsidian.py --vault examples/good-dog-corpus/vault
-python -m second_brain.check
-```
-
-See [`examples/good-dog-corpus/`](examples/good-dog-corpus/) for what to look for.
-
-**Search it:**
-
-```bash
-python scripts/search_cli.py -q "your topic" --mode hybrid
-```
-
-Everything runs locally. No API keys. No accounts. No data leaves your machine.
+¹ The DuckDB-hybrid enrichment path (chunk store + scheduled re-reads) is the
+stage that most exercises the "hybrid" half. It is currently stale against the
+consolidated `Graph` API and exits with a clear notice rather than running.
+Reconciling it is the next milestone. Until then, **the core stores entities,
+edges, and *entity* embeddings in LadybugDB**; the DuckDB *chunk* store is wired
+into the experimental enrichment loop, not the core ingest.
 
 ---
 
-## Detailed Setup
-
-### Prerequisites
-
-- **Python 3.10 or later** (check: `python3 --version`)
-- **[Ollama](https://ollama.com)** installed and running (handles all AI locally)
-- **An Obsidian vault** (or any folder of markdown files)
-
-### Step 1: Install
+## Quick start
 
 ```bash
-git clone https://github.com/M0nkeyFl0wer/second-brain-open-kg.git
-cd second-brain-open-kg
-bash setup.sh
+git clone https://github.com/M0nkeyFl0wer/second-brain-hybrid-graph.git
+cd second-brain-hybrid-graph
+bash setup.sh            # venv + deps (from requirements.txt) + Ollama models
 ```
 
-`setup.sh` creates a virtual environment, installs all Python packages, downloads the spaCy language model, and pulls the Ollama models (nomic-embed-text for embeddings, llama3.2 for extraction). Takes about 5 minutes depending on your internet speed.
-
-### Step 2: Verify
+Then run the bundled demo corpus end to end:
 
 ```bash
-python -m second_brain.check
+# Ingest 36 demo docs with a custom ontology
+python scripts/ingest_obsidian.py \
+    --vault examples/good-dog-corpus/vault \
+    --ontology examples/good-dog-corpus/ontology.yaml
+
+python -m second_brain.check                 # inspect the graph
+python scripts/search_cli.py -q 'your query' # vector / keyword / hybrid / path
+python scripts/visualize.py                  # interactive HTML + H0/H1 homology
 ```
 
-```
-open-second-brain system check
-========================================
-  LadybugDB: 0.15.3
-  PyArrow: 23.0.1
-  spaCy: 3.8.14
-  spaCy model: en_core_web_sm OK
-  NetworkX: 3.6.1
-  Ollama: OK (2 models)
-  Embedding model: nomic-embed-text OK
+> Ingestion runs a local LLM per note, so a cold first run takes minutes, not
+> seconds. That's the cost of keeping everything local and key-free.
 
-Ontology: Ontology(8 entity types, 9 edge types)
-  All checks passed.
-```
-
-If anything says NOT INSTALLED or MISSING, the check tells you exactly what to run.
-
-### Step 3: Point at Your Vault
-
-Either pass it on the command line:
+Point it at **your own** content instead:
 
 ```bash
-python scripts/ingest_obsidian.py --vault ~/obsidian-vault
-```
-
-Or set it permanently in `second_brain/config.py`:
-
-```python
-VAULT_PATH = "~/obsidian-vault"
-```
-
-### Step 4: Ingest
-
-```bash
-python scripts/ingest_obsidian.py
-```
-
-Output:
-
-```
-Scanning vault: ~/obsidian-vault
-Found 247 notes.
-
-[1/247] concepts/spaced-repetition.md
-  Extracted: 8 entities, 3 edges
-[2/247] reading/make-it-stick.md
-  Extracted: 12 entities, 5 edges
-...
-
-Bulk loading 1,847 entities...
-  Loaded: 1,847
-Computing entity embeddings...
-Rebuilding vector indexes...
-
-==================================================
-Ingestion complete in 312.4s.
-  Notes processed:     247
-  Total entities:      1,847
-  Total edges:         423
-```
-
-### Search Your Knowledge
-
-```bash
-# Keyword search
-python scripts/search_cli.py -q "spaced repetition"
-
-# Semantic search — finds related concepts by meaning
-python scripts/search_cli.py -q "techniques for remembering things" --mode semantic
-
-# Hybrid search — combines keyword and semantic via Reciprocal Rank Fusion
-python scripts/search_cli.py -q "learning" --mode hybrid
-
-# Hidden connections — ideas that are similar but you never linked
-python scripts/search_cli.py -q "meditation" --mode hidden
-
-# Find paths between concepts
-python scripts/search_cli.py --path "meditation" "creativity"
-```
-
-**Hidden connections** are the key feature. They surface ideas like:
-
-```
-Hidden connections for: meditation
-
-  [concept        ] neuroplasticity
-                    distance: 0.187 | unlinked
-  [practice       ] deep work sessions
-                    distance: 0.223 | unlinked
-  [concept        ] default mode network
-                    distance: 0.251 | unlinked
-```
-
-These are concepts in your vault that are semantically close to "meditation" but have zero graph edges connecting them. Your brain hasn't linked them yet — but the math says they belong together.
-
-### Analyze Your Knowledge Structure
-
-```bash
-python scripts/run_analysis.py
-```
-
-```
-KNOWLEDGE GRAPH ANALYSIS
-============================================================
-  Entities:              1,847
-  Edges:                 423
-  Connected components:  89
-  Largest component:     312 nodes
-  Communities (Louvain): 23
-
-KNOWLEDGE GAPS: 5
-------------------------------------------------------------
-  [HIGH] "cognitive science" cluster ↔ "productivity" cluster
-         45 entities ↔ 38 entities | cross-edges: 0
-         → How do your ideas about cognitive science and productivity relate?
-
-SURPRISING BRIDGES: 3
-------------------------------------------------------------
-  "sleep architecture" (concept)
-    Betweenness: 0.312 | Degree: 4
-    → Bridges different areas of your thinking
-```
-
-### Daily Reflection
-
-```bash
-python scripts/daily_briefing.py
-```
-
-Generates `reflections/2026-04-04.md`:
-
-```markdown
-# Daily Reflection — 2026-04-04
-
-## New Ideas (last 24h): 12
-  5 concept, 3 insight, 2 source, 2 question
-
-## Conflicting Beliefs
-  "deliberate practice requires focus" contradicts
-  "creativity requires unfocused mind-wandering"
-
-## Knowledge Gaps
-  Your ideas about [meditation, mindfulness, attention]
-  and [neuroplasticity, learning, memory] are not yet connected.
-
-## Hidden Connections
-  "spaced repetition" ↔ "compound interest" (distance: 0.18)
-  → Similar structure: both involve small repeated inputs
-    compounding over time
-
-## Ideas Needing Development: 8 underdeveloped
-  - flow state (concept)
-  - Richard Feynman (person)
+python scripts/ingest_folder.py              # a folder of documents
+python scripts/ingest_obsidian.py --vault /path/to/vault
 ```
 
 ---
 
-## How It Works
+## Custom ontology — not hardcoded
 
-### The Five Layers
-
-#### 1. Obsidian Integration
-
-Your vault is the source of truth. The ingestion pipeline reads every `.md` file and extracts:
-
-- **YAML frontmatter** — title, tags, type, source, created date
-- **`[[wikilinks]]`** — explicit connections you've made between notes
-- **`#tags`** — both frontmatter and inline tags become concept entities
-- **Body text** — fed through three-phase extraction
-
-Skips `.obsidian/`, `.trash/`, `templates/`, and other non-content directories. Re-ingestion is idempotent — notes are identified by their vault-relative path hash.
-
-#### 2. Three-Phase Extraction
-
-Every note goes through:
-
-**Phase 1 — Deterministic** (instant, free):
-- Regex patterns for dates and structured references
-- Confidence: 0.85-0.90
-
-**Phase 2 — spaCy NER** (fast, local):
-- Named entity recognition: people, organizations, locations
-- Maps to PKG types: PERSON → person, ORG → source, GPE → place
-- Confidence: 0.70
-
-**Phase 3 — LLM** (slower, local via Ollama):
-- Extracts concepts, insights, questions, and typed relationships
-- Constrained by ontology — only produces types listed in ONTOLOGY.md
-- Confidence: 0.60
-
-#### 3. Semantic Spacetime Schema
-
-Simple relationships use direct edges:
-
-```
-"meditation" --[SUPPORTS]--> "focus"
-"Make It Stick" --[LEARNED_FROM]--> "spaced repetition"
-```
-
-Complex or multi-way relationships use **edge-nodes** — first-class nodes that represent the relationship itself:
-
-```
-"spaced repetition" --[CONNECTS]--> (similar_edge: "both compound over time") --[BINDS]--> "compound interest"
-```
-
-Four edge-node types from Semantic Spacetime theory:
-- **similar_edge** — "X is like Y" (analogy, proximity)
-- **contains_edge** — "X contains Y" (hierarchy, composition)
-- **property_edge** — "X has property Y" (state, attribute)
-- **leads_to_edge** — "X leads to Y" (causality, sequence)
-
-Edge-nodes support hypergraphs (one relationship linking 3+ concepts) and metagraphs (thoughts about thoughts) without schema changes.
-
-#### 4. Hidden Connections
-
-The killer feature. For each entity with an embedding:
-1. HNSW vector index finds nearest neighbors in embedding space
-2. Filter out entities already connected via any edge
-3. Remaining pairs = hidden connections (similar meaning, no link)
-
-This is how you discover that "meditation" and "neuroplasticity" belong together even though you never made a `[[wikilink]]` between them.
-
-#### 5. Community Summaries ("Zoom Out")
-
-LadybugDB's native Louvain algorithm groups your entities into communities. For each community:
-1. Top-5 entities by degree become the summary
-2. Summary is embedded as a FLOAT[768] vector
-3. Stored as CommunityMeta nodes with their own HNSW index
-
-When you ask a broad question ("what do I know about learning?"), the system searches community summaries first — answering with themes rather than individual facts.
-
----
-
-## Ontology
-
-Your knowledge types, defined in `ONTOLOGY.md`:
-
-### Entity Types
-
-| Type | What it captures |
-|------|-----------------|
-| `concept` | Ideas, topics, principles, beliefs |
-| `person` | Authors, mentors, friends, historical figures |
-| `source` | Books, articles, podcasts, courses |
-| `project` | Personal projects, initiatives |
-| `insight` | Original thoughts, realizations, synthesis |
-| `question` | Open questions, uncertainties |
-| `practice` | Habits, methods, routines |
-| `place` | Locations with personal meaning |
-
-### Edge Types
-
-| Type | Meaning |
-|------|---------|
-| `LEARNED_FROM` | Where you learned something |
-| `INSPIRED_BY` | What sparked a thought |
-| `CONFLICTS_WITH` | Contradicting beliefs |
-| `SUPPORTS` | Reinforcing ideas |
-| `PART_OF` | Hierarchy or composition |
-| `PRACTICED_IN` | Where you apply a method |
-| `ASKED_ABOUT` | What a question investigates |
-| `ANSWERS` | What resolves a question |
-| `ASSOCIATED_WITH` | Catch-all (use sparingly) |
-
-Edit `ONTOLOGY.md` to match your thinking style. The system rejects entities that don't match — the rejection log tells you when to expand.
-
----
-
-## Search Modes
-
-| Mode | How it works | Best for |
-|------|-------------|----------|
-| `keyword` | Exact substring match on labels | Finding specific entities |
-| `semantic` | Cosine similarity of embeddings | Finding related ideas by meaning |
-| `hybrid` | Reciprocal Rank Fusion across keyword + semantic | Best general-purpose search |
-| `hidden` | Vector-similar but graph-unlinked pairs | Discovering connections you missed |
-
----
-
-## Privacy
-
-**Default: fully local.** Everything runs on your machine via Ollama.
-
-| Component | Where it runs |
-|-----------|--------------|
-| Your notes | Stay on disk (never copied to cloud) |
-| Entity extraction | Ollama on your CPU/GPU |
-| Embeddings | Ollama (nomic-embed-text, local) |
-| Knowledge graph | LadybugDB directory on disk |
-| Vector search | LadybugDB native HNSW index |
-| Community detection | LadybugDB native Louvain |
-| Analysis | Python (NetworkX) on your CPU |
-| Daily reflections | Written to local markdown |
-
-Optional hybrid mode sends non-sensitive text to a remote LLM for better extraction quality. Your graph, embeddings, and analysis always stay local.
-
----
-
-## Configuration
-
-All settings in `second_brain/config.py`:
-
-```python
-VAULT_PATH = "~/obsidian-vault"          # Your vault location
-GRAPH_DIR = Path("data/graph.lbug")      # Graph database
-BRIEFING_DIR = Path("reflections")       # Daily reflections output
-EMBEDDING_MODEL = "nomic-embed-text"     # 768-dim local embeddings
-LOCAL_EXTRACTION_MODEL = "llama3.2:3b"   # Local LLM for extraction
-HIDDEN_CONNECTION_THRESHOLD = 0.3        # Max distance for hidden links
-MIN_COMMUNITY_SIZE = 3                   # Min entities per community
-PRUNE_AGE_DAYS = 14                      # Flag underdeveloped ideas after
-```
-
----
-
-## MCP Integration (AI Assistants)
-
-The MCP server exposes your knowledge graph to AI assistants (Claude Code, etc.) via three high-level tools:
+The ontology (what entity and edge types exist) is a **loadable YAML config**,
+defaulting to a built-in second-brain ontology. Point any ingest at your own:
 
 ```bash
-python -m second_brain.mcp_server
+python scripts/ingest_obsidian.py --vault ./notes --ontology ./my-ontology.yaml
 ```
 
-**`memory_write`** — Capture a thought. Auto-classifies, extracts entities, links to graph.
+```yaml
+# my-ontology.yaml
+entity_types: [concept, person, source, project, insight, question]
+edge_types:
+  LEARNED_FROM:   { direction: "concept -> source" }
+  CONFLICTS_WITH: { direction: "*" }      # any -> any
+  SUPPORTS:       { direction: "*" }
+```
 
-**`memory_zoom_out`** — Broad questions answered via community summaries.
-
-**`memory_search`** — Hybrid search with graph expansion.
-
-Configure in Claude Code's MCP settings to give your assistant persistent memory across sessions.
+A tailored ontology drives extraction (the LLM is told your types) and validates
+every edge against domain/range. See [ONTOLOGY.md](ONTOLOGY.md) and the worked
+example in [`examples/good-dog-corpus/`](examples/good-dog-corpus/).
 
 ---
 
-## The Stack
+## Storage: why DuckDB + LadybugDB
 
-| Tool | Repo | Purpose |
-|------|------|---------|
-| [LadybugDB](https://ladybugdb.com) 0.15.3 | [GitHub](https://github.com/LadybugDB/ladybug) | Graph database + vector storage + native algorithms (Louvain, PageRank, WCC) |
-| [PyArrow](https://arrow.apache.org) | [GitHub](https://github.com/apache/arrow) | Bulk Parquet ingestion (25x faster) |
-| [spaCy](https://spacy.io) | [GitHub](https://github.com/explosion/spaCy) | Named entity recognition (Phase 2) |
-| [NetworkX](https://networkx.org) | [GitHub](https://github.com/networkx/networkx) | Betweenness centrality, bridge detection, persistent homology |
-| [Ollama](https://ollama.com) | [GitHub](https://github.com/ollama/ollama) | Local AI: embeddings (nomic-embed-text) + extraction (llama3.2) |
-| [vis-network](https://visjs.github.io/vis-network/) | [GitHub](https://github.com/visjs/vis-network) | Interactive graph visualization in the dashboard |
-| [Ripser](https://ripser.scikit-tda.org) | [GitHub](https://github.com/scikit-tda/ripser.py) | Persistent homology for topological gap detection (optional) |
-| [MCP](https://modelcontextprotocol.io) | [GitHub](https://github.com/modelcontextprotocol) | AI assistant integration (optional) |
-
-### Why LadybugDB?
-
-- **Embedded** — no server, one directory = one brain
-- **Native vectors** — FLOAT[768] + HNSW index, no separate vector DB
-- **Native algorithms** — Louvain, PageRank, WCC run inside the DB
-- **Bulk loading** — COPY FROM Parquet, 25x faster than row-by-row
-- **Cypher** — industry-standard query language
+Embedded, columnar, zero-daemon, local-first — the chunk/retrieval workload
+fits DuckDB, the typed-edge/traversal workload fits LadybugDB, and neither needs
+a running server. **Postgres is the documented escape hatch** for when you
+outgrow embedded (multi-writer, multi-tenant, network-shared). The full
+rationale, the five triggers that mean "switch to Postgres," and a planned
+`variant/postgres-substrate` branch are in **[docs/STORAGE.md](docs/STORAGE.md)**.
 
 ---
 
-## Architecture
+## Requirements
 
-<img src="static/graph-analysis-architecture.png" alt="The Architecture of Graph Insights: LadybugDB + NetworkX" width="100%">
-
-*Three-layer architecture: LadybugDB foundation (schema, columnar storage, vectorized execution) → NetworkX analysis bridge (betweenness, communities, shortest paths, gap detection) → Insight layer (hairball → skeleton filtering, interactive exploration, structural gap discovery).*
-
-```
-Obsidian Vault (*.md)
-    │
-    ▼
-obsidian.py                ← Parse frontmatter, wikilinks, tags
-    │
-    ▼
-extract.py                 ← Three-phase: regex → spaCy → LLM
-    │
-    ▼
-graph.py                   ← LadybugDB: entities + edges + vectors + edge-nodes
-    │
-    ├─► vector index       (HNSW on Entity.embedding)
-    ├─► FTS index          (BM25 on Entity.label/description)
-    └─► algo extension     (native Louvain, PageRank, WCC)
-         │
-    ┌────┼────────────────┐
-    ▼    ▼                ▼
-search  hidden_connections  community_summaries
-(RRF    (vector-similar    (Louvain → summary
-hybrid)  but unlinked)      → embed → CommunityMeta)
-    │         │                    │
-    └─────────┼────────────────────┘
-              ▼
-    topology.py + briefing.py
-    (gaps, bridges,       (Daily Reflection
-     homology)             markdown)
-```
-
-### Database Schema
-
-```
-Entity (id, entity_type, label, description, confidence,
-        source_url, provenance, timestamps, embedding[768], layer)
-
-EdgeNode (id, semantic_type, label, weight, confidence,
-          provenance, created_at, expired_at)
-
-CommunityMeta (id, community_id, size, summary, top_entities,
-               computed_at, embedding[768])
-
-Document (id, path, title, ingested_at, chunk_count)
-Chunk (id, doc_id, text, chunk_index, created_at, embedding[768])
-
-RELATES_TO    Entity → Entity    (edge_type, weight, confidence, expired_at)
-CONNECTS      Entity → EdgeNode  (role)
-BINDS         EdgeNode → Entity  (role)
-MENTIONED_IN  Entity → Document
-CHUNK_OF      Chunk → Document
-```
+- Python 3.10+
+- [Ollama](https://ollama.com) for local extraction + embeddings
+  (`nomic-embed-text`, `llama3.2:3b` — both small)
+- Everything else installs via `requirements.txt` (`setup.sh` handles it)
 
 ---
 
-## Recipes
+## License & contact
 
-### Ingest a new batch of notes
+MIT — see [LICENSE](LICENSE). Tools don't own what you build with them.
 
-```bash
-# Only processes notes not already in the graph
-python scripts/ingest_obsidian.py
-
-# Force re-ingest everything
-python scripts/ingest_obsidian.py --force
-```
-
-### Find what connects two ideas
-
-```bash
-python scripts/search_cli.py --path "meditation" "creativity"
-```
-
-### Discover hidden links for a concept
-
-```bash
-python scripts/search_cli.py -q "stoicism" --mode hidden
-```
-
-### Weekly reflection
-
-```bash
-python scripts/run_analysis.py    # Full topology analysis
-python scripts/daily_briefing.py  # Generate reflection
-```
-
-### Check ontology health
-
-```bash
-python scripts/validate_ontology.py
-```
-
-### Query the graph at a point in time
-
-```python
-# What edges existed before October?
-from second_brain.graph import Graph
-g = Graph()
-results = g.query("""
-    MATCH (a:Entity)-[r:RELATES_TO]->(b:Entity)
-    WHERE r.created_at <= $cutoff AND r.expired_at = 0
-    RETURN a.label, r.edge_type, b.label
-    ORDER BY r.created_at DESC LIMIT 20
-""", parameters={"cutoff": 1727740800})
-```
-
-### Back up your graph
-
-```bash
-tar czf brain-backup-$(date +%Y%m%d).tar.gz data/ reflections/ ONTOLOGY.md
-```
-
----
-
-## Troubleshooting
-
-### "Ollama: NOT RUNNING"
-
-```bash
-ollama serve
-ollama pull nomic-embed-text
-ollama pull llama3.2:3b
-```
-
-### "spaCy model: MISSING"
-
-```bash
-source .venv/bin/activate && python -m spacy download en_core_web_sm
-```
-
-### Ingestion is slow
-
-Most time is LLM extraction (Phase 3). Use a smaller model:
-
-```python
-LOCAL_EXTRACTION_MODEL = "llama3.2:1b"  # in config.py
-```
-
-### Too many entities of one type
-
-Run `validate_ontology.py`. If CI > 0.5, add better exotypical examples to ONTOLOGY.md for the dominant type.
-
-### HNSW index blocks embedding updates
-
-Vector indexes block SET operations. After bulk embedding, call:
-
-```python
-graph.rebuild_vector_indexes()
-```
-
----
-
-## Claude Code Skills
-
-If you use [Claude Code](https://claude.ai/code), this repo ships with skills that wrap every script as a slash command:
-
-| Skill | Command | What it does |
-|-------|---------|-------------|
-| `/ingest` | `python scripts/ingest_obsidian.py` | Scan vault, extract, embed, load |
-| `/search` | `python scripts/search_cli.py` | Keyword, semantic, hybrid, hidden, path |
-| `/analyze` | `python scripts/run_analysis.py` | Topology: gaps, bridges, communities, homology |
-| `/briefing` | `python scripts/daily_briefing.py` | Daily Reflection markdown |
-| `/validate` | `python scripts/validate_ontology.py` | Ontology health: ICR, CI, IPR |
-| `/hidden` | `hidden_connections.py` | Find semantically similar but unlinked ideas |
-| `/communities` | `community_summaries.py` | Louvain → embed → zoom-out queries |
-
-### Reusable Tool Skills
-
-The repo also includes reference skills for the underlying tools. These are portable — useful for anyone building knowledge graph tooling with Claude Code:
-
-```
-.claude/skills/tools/
-├── ladybug.md       — LadybugDB: Cypher, Python API, extensions, HNSW, FTS
-├── ladybug-rag.md   — Graph RAG: vector + BM25 + graph hybrid retrieval
-├── networkx.md      — Centrality, communities, bridges, shortest paths
-└── ripser.md        — Persistent homology for topological gap detection
-```
-
-These skills teach Claude Code how to write correct LadybugDB Cypher, use HNSW vector indexes, build NetworkX graphs from query results, and interpret persistence diagrams. Drop them in any project's `.claude/skills/` directory.
-
----
-
-## File Reference
-
-```
-open-second-brain/
-├── ONTOLOGY.md                         # Entity + edge types (you edit this)
-├── README.md                           # This file
-├── requirements.txt                    # Python dependencies
-├── setup.sh                            # One-command setup
-├── second_brain/
-│   ├── __init__.py                     # Package init
-│   ├── config.py                       # All configuration
-│   ├── ontology.py                     # ONTOLOGY.md parser + validator
-│   ├── graph.py                        # LadybugDB: schema, CRUD, vectors, edge-nodes
-│   ├── embed.py                        # Ollama embedding wrapper
-│   ├── extract.py                      # Three-phase extraction pipeline
-│   ├── obsidian.py                     # Vault reader: frontmatter, wikilinks, tags
-│   ├── hidden_connections.py           # Semantically similar but unlinked pairs
-│   ├── community_summaries.py          # Louvain communities + embedded summaries
-│   ├── topology.py                     # NetworkX analysis + skeleton export
-│   ├── briefing.py                     # Daily Reflection generator
-│   ├── queries.py                      # All Cypher patterns (centralized)
-│   ├── check.py                        # Dependency verification
-│   └── mcp_server.py                   # MCP tools for AI assistants
-├── scripts/
-│   ├── ingest_obsidian.py              # Main entry: vault → graph
-│   ├── ingest_folder.py                # Generic document ingestion
-│   ├── search_cli.py                   # Search: keyword/semantic/hybrid/hidden/path
-│   ├── run_analysis.py                 # Topology analysis
-│   ├── daily_briefing.py               # Generate daily reflection
-│   └── validate_ontology.py            # Ontology health (ICR/CI/IPR)
-├── .claude/skills/
-│   ├── ingest/SKILL.md                 # /ingest slash command
-│   ├── search/SKILL.md                 # /search slash command
-│   ├── analyze/SKILL.md                # /analyze slash command
-│   ├── briefing/SKILL.md               # /briefing slash command
-│   ├── validate/SKILL.md               # /validate slash command
-│   ├── hidden/SKILL.md                 # /hidden slash command
-│   ├── communities/SKILL.md            # /communities slash command
-│   └── tools/                          # Reusable reference skills
-│       ├── ladybug.md                  #   LadybugDB API + Cypher
-│       ├── ladybug-rag.md              #   Graph RAG patterns
-│       ├── networkx.md                 #   Centrality, communities, paths
-│       └── ripser.md                   #   Persistent homology
-├── docs/
-│   └── privacy-guide.md                # Privacy mode comparison
-├── data/                               # Graph database (gitignored)
-└── reflections/                        # Generated reflections (gitignored)
-```
-
----
-
-## Contributing
-
-Issues and PRs welcome. Keep it simple — this is a tool for thinking, not a framework.
-
-## License
-
-MIT
-
-## Contact
-
-Built by [Ben West](https://benwest.blog).
+Feedback and contributions welcome. Open an issue or PR.
