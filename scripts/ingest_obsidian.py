@@ -68,6 +68,7 @@ def main():
         all_entities = []
         all_edges = []
         t_start = time.time()
+        extract_failures = 0  # extractions that errored (e.g. backend timeout)
 
         for i, note in enumerate(notes, 1):
             print(f"[{i}/{len(notes)}] {note['relative_path']}")
@@ -78,6 +79,9 @@ def main():
             # Run extraction on body text
             result = extractor.extract_from_text(
                 note["body"], source_url=note["path"], doc_id=note["doc_id"])
+            if result.get("_error"):
+                extract_failures += 1
+                print(f"  ⚠ extraction FAILED: {result['_error']}")
             print(f"  Extracted: {len(result['entities'])} entities, "
                   f"{len(result['edges'])} edges")
 
@@ -159,19 +163,37 @@ def main():
 
         # Summary
         elapsed = time.time() - t_start
+        edge_count = graph.edge_count()
         print(f"\n{'=' * 50}")
-        print(f"Ingestion complete in {elapsed:.1f}s.")
+        # Don't claim success if extraction silently failed. A 0-edge graph
+        # with extraction failures means the LLM backend was unreachable /
+        # timing out (e.g. Ollama saturated) — NOT that the corpus had no
+        # relationships. Surface it loudly so the operator re-runs rather
+        # than shipping a hollow graph.
+        if extract_failures and edge_count == 0:
+            print(f"⚠  INGEST DEGRADED — {extract_failures}/{len(notes)} extractions "
+                  f"failed and the graph has 0 edges.")
+            print(f"   The extraction backend (Ollama @ {getattr(extractor,'host','?')}) "
+                  f"likely timed out or was unreachable.")
+            print(f"   Documents + entities were stored, but NO relationships were "
+                  f"extracted. Re-run when the backend is responsive.")
+        else:
+            print(f"Ingestion complete in {elapsed:.1f}s.")
+            if extract_failures:
+                print(f"  ⚠ {extract_failures}/{len(notes)} extractions failed "
+                      f"(partial graph)")
         print(f"  Notes processed:     {len(notes)}")
         print(f"  Total entities:      {graph.entity_count()}")
-        print(f"  Total edges:         {graph.edge_count()}")
+        print(f"  Total edges:         {edge_count}")
         print(f"  Total documents:     {graph.document_count()}")
         print(f"\nNext steps:")
         print(f"  Search:    python scripts/search_cli.py -q 'your query'")
         print(f"  Analyze:   python scripts/run_analysis.py")
         print(f"  Reflect:   python scripts/daily_briefing.py")
 
-        # Ontology rejections
-        rejections = ontology.get_rejection_counts()
+        # Ontology rejections (optional — not all ontology types track these)
+        rejections = (ontology.get_rejection_counts()
+                      if hasattr(ontology, "get_rejection_counts") else {})
         if rejections:
             print(f"\nOntology rejections:")
             for type_name, count in list(rejections.items())[:10]:

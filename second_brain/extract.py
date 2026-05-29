@@ -12,13 +12,22 @@ Returns:
 """
 
 import json
+import logging
+import os
 import urllib.request
 from typing import Any
 
+logger = logging.getLogger(__name__)
 
+# Default extraction model. NOTE: a 14B model makes local ingestion crawl;
+# the Extractor class overrides this with config.LOCAL_EXTRACTION_MODEL
+# (llama3.2:3b). Kept here only as the bare-function fallback.
 DEFAULT_MODEL = "qwen3:14b"
 DEFAULT_HOST = "http://localhost:11434"
-TIMEOUT_SECONDS = 60
+# Per-call extraction timeout. Bumped 60→120 (a 60s cap silently dropped
+# every call on a contended/cold backend → 0-edge graphs). Override via
+# SECOND_BRAIN_EXTRACT_TIMEOUT.
+TIMEOUT_SECONDS = int(os.environ.get("SECOND_BRAIN_EXTRACT_TIMEOUT", "120"))
 
 
 DEFAULT_NODE_TYPES = [
@@ -113,9 +122,16 @@ JSON response:"""
         return _parse_json_response(response_text)
 
     except Exception as ex:
-        # Log and return empty on failure
-        print(f"[extract_triplets] Error: {ex}")
-        return {"entities": [], "edges": []}
+        # Surface the failure instead of masking it. A silent empty return
+        # on timeout/connection-error makes a degraded backend (e.g. Ollama
+        # saturated by other workloads) produce a 0-edge graph that still
+        # reports "ingestion complete" — indistinguishable from "the text
+        # genuinely had no relationships." The "_error" key lets callers
+        # count failures and refuse to declare success on a starved run.
+        # 2026-05-28: an 85-min ingest produced 142 entities / 0 edges
+        # because every extraction call timed out and was silently dropped.
+        logger.warning("extract_triplets failed (model=%s): %s", model, ex)
+        return {"entities": [], "edges": [], "_error": str(ex)}
 
 
 def _parse_json_response(response_text: str) -> dict[str, Any]:
@@ -280,4 +296,7 @@ class Extractor:
                 "source_url": source_url,
             })
 
-        return {"entities": entities, "edges": edges}
+        out = {"entities": entities, "edges": edges}
+        if raw.get("_error"):
+            out["_error"] = raw["_error"]   # propagate backend failure to caller
+        return out
