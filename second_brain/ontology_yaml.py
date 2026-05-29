@@ -31,7 +31,7 @@ from pathlib import Path
 
 import yaml
 
-from kg_common.ontology.base import Ontology
+from second_brain.ontology_base import Ontology
 
 
 class YamlOntology(Ontology):

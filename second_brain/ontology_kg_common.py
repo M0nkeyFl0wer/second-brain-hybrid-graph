@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from itertools import product
 
-from kg_common.ontology.base import Ontology
+from second_brain.ontology_base import Ontology
 
 from second_brain.ontology import (
     EDGE_TYPES as _EDGE_TYPES,

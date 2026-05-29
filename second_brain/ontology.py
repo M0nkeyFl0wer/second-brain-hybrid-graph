@@ -218,10 +218,14 @@ def node_type_prompt_fragment() -> str:
     return "\n".join(lines)
 
 
-# Backward-compat alias. The legacy `Ontology` class referenced from 11
-# callsites was removed from this module at some point but the imports
-# never got updated. `SecondBrainOntology` is the kg-common Ontology ABC
-# subclass that replaces it. This single line repairs every broken-import
-# site without touching the callers. See PLAN.md Phase 5.2 and the memory
-# entry `project_open_second_brain_broken_imports.md`.
-from second_brain.ontology_kg_common import SecondBrainOntology as Ontology  # noqa: E402, F401
+# Backward-compat alias `Ontology` → `SecondBrainOntology`. Resolved LAZILY
+# via PEP 562 module __getattr__ to avoid a circular import: ontology_kg_common
+# imports NODE_TYPES/EDGE_TYPES/TYPE_ALIASES from THIS module, so a top-level
+# `from .ontology_kg_common import ...` here would deadlock when something
+# imports ontology_kg_common first. Lazy resolution breaks the cycle — the
+# subclass is only pulled in on first access of `ontology.Ontology`.
+def __getattr__(name: str):
+    if name in ("Ontology", "SecondBrainOntology"):
+        from second_brain.ontology_kg_common import SecondBrainOntology
+        return SecondBrainOntology
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
