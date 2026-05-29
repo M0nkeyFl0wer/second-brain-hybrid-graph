@@ -8,18 +8,16 @@ Three things pinned:
 2. SecondBrainOntology satisfies the kg-common Ontology ABC surface —
    every method the writer calls returns a sensible value.
 3. The bi-temporal opt-in value for SecondBrainOntology is locked.
-   Currently True (inherits DEFAULT_EDGE_FIELDS from `kg_common.ontology.base`,
-   no override).
+   Currently True (inherits DEFAULT_EDGE_FIELDS from the vendored
+   `second_brain.ontology_base`, no override).
 
-Run requires kg-common installed in this project's venv. Skip-with-reason
-if not — useful as documentation when the dep isn't installed yet.
+The base ABC was vendored from kg-common into `second_brain.ontology_base`
+to drop the private dependency, so conformance is now checked against the
+vendored base (no external package required).
 """
 from __future__ import annotations
 
 import pytest
-
-
-pytest.importorskip("kg_common")
 
 
 # ----------------------------------------------------------------------
@@ -64,7 +62,7 @@ def test_legacy_ontology_constructs_with_path_arg():
 
 
 def test_second_brain_ontology_satisfies_abc():
-    from kg_common.ontology.base import Ontology as AbcOntology
+    from second_brain.ontology_base import Ontology as AbcOntology
     from second_brain.ontology_kg_common import SecondBrainOntology
 
     ont = SecondBrainOntology()

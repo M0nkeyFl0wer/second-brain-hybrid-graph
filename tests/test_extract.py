@@ -17,6 +17,9 @@ def extractor(ontology, mock_ollama):
     return Extractor(ontology)
 
 
+@pytest.mark.skip(reason="Phase-1 regex/deterministic extraction was removed "
+                  "in the 2026-04-08 refactor; extraction is now LLM-only "
+                  "(extract.py). No deterministic date/structure phase exists.")
 class TestPhase1Deterministic:
     """Test regex-based deterministic extraction (dates, structure)."""
 
@@ -49,6 +52,9 @@ class TestPhase1Deterministic:
         assert len(deterministic) == 0
 
 
+@pytest.mark.skip(reason="Phase-2 spaCy NER was removed in the 2026-04-08 "
+                  "refactor; extraction is now LLM-only (extract.py). No spaCy "
+                  "dependency or NER phase exists.")
 class TestPhase2SpaCy:
     """Test spaCy NER extraction with ontology type mapping."""
 
@@ -87,37 +93,36 @@ class TestPhase2SpaCy:
 
 
 class TestEntityIdGeneration:
-    """Test the canonical entity ID function."""
+    """The canonical entity ID is a slug of the label.
+
+    The post-refactor design keys entity identity on the LABEL only (id =
+    slugify(label)), not a (label, type, source) hash — so the same concept
+    referenced from different documents resolves to the same node, which is
+    what lets cross-document edges connect. (The old 3-arg hash contract is
+    gone by design.)
+    """
 
     def test_generate_entity_id_deterministic(self):
-        """Same inputs should always produce the same ID."""
+        """Same label always produces the same ID."""
         from second_brain.extract import generate_entity_id
-        id1 = generate_entity_id("spaced repetition", "concept", "test.md")
-        id2 = generate_entity_id("spaced repetition", "concept", "test.md")
-        assert id1 == id2
+        assert generate_entity_id("spaced repetition") == generate_entity_id("spaced repetition")
 
-    def test_generate_entity_id_different_types(self):
-        """Same label with different types should produce different IDs."""
+    def test_generate_entity_id_is_slug(self):
+        """ID is a lowercased underscore slug of the label."""
         from second_brain.extract import generate_entity_id
-        id_concept = generate_entity_id("meditation", "concept", "test.md")
-        id_practice = generate_entity_id("meditation", "practice", "test.md")
-        assert id_concept != id_practice
+        assert generate_entity_id("Spaced Repetition!") == "spaced_repetition"
 
-    def test_generate_entity_id_different_sources(self):
-        """Same label from different sources should produce different IDs."""
+    def test_generate_entity_id_distinct_labels_differ(self):
+        """Different labels produce different IDs."""
         from second_brain.extract import generate_entity_id
-        id1 = generate_entity_id("test", "concept", "source_a.md")
-        id2 = generate_entity_id("test", "concept", "source_b.md")
-        assert id1 != id2
-
-    def test_generate_entity_id_length(self):
-        """IDs should be 16-character hex strings (SHA256 truncated)."""
-        from second_brain.extract import generate_entity_id
-        eid = generate_entity_id("test", "concept", "")
-        assert len(eid) == 16
-        assert all(c in "0123456789abcdef" for c in eid)
+        assert generate_entity_id("meditation") != generate_entity_id("mindfulness")
 
 
+@pytest.mark.skip(reason="Cross-mention dedup now happens at the ingest layer "
+                  "(ingest_obsidian.py 'seen' map), not in extract_from_text, "
+                  "and this test's mock_ollama fixture patches the 'ollama' "
+                  "package while the extractor calls urllib /api/generate. "
+                  "Covered behaviorally by the ingest path.")
 class TestDeduplication:
     """Test entity deduplication within a single extraction."""
 

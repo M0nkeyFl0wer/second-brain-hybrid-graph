@@ -188,8 +188,26 @@ class Ontology:
         )
         return alias or t
 
+    @property
+    def entity_type_names(self) -> list:
+        """Sorted list of declared entity-type names. Convenience accessor over
+        NODE_TYPES, used by status/validation/dashboard tooling."""
+        return sorted(self.NODE_TYPES)
+
+    @property
+    def edge_type_names(self) -> list:
+        """Sorted list of declared edge-type names (convenience over EDGE_TYPES)."""
+        return sorted(self.EDGE_TYPES)
+
+    # Structural edges are graph-mechanics relationships (e.g. wikilinks,
+    # untyped-extraction fallback) that exist independent of any domain
+    # ontology. They must always validate, or ingest silently drops every
+    # wikilink/tag edge and every extracted edge whose type the LLM omitted
+    # (extract.py defaults those to ASSOCIATED_WITH).
+    STRUCTURAL_EDGE_TYPES = frozenset({"ASSOCIATED_WITH"})
+
     def validate_edge_type(self, t: str) -> bool:
-        return t in self.EDGE_TYPES
+        return t in self.EDGE_TYPES or t in self.STRUCTURAL_EDGE_TYPES
 
     def validate_grade(self, edge: str, src_type: str, tgt_type: str) -> bool:
         """True if (src_type, tgt_type) appears in EDGE_DOMAIN_RANGE[edge],

@@ -10,6 +10,22 @@ Tests cover:
 """
 import pytest
 
+# This file targets the PRE-REFACTOR ontology API: a class that parsed
+# entity/edge types out of ONTOLOGY.md and exposed entity_types/edge_types
+# objects, get_rejection_counts(), get_extraction_prompt_context(), and
+# case-insensitive validate_*(). The current ontology is frozenset-based
+# (NODE_TYPES/EDGE_TYPES/EDGE_DOMAIN_RANGE + validate_edge_type/validate_grade,
+# vendored from kg_common; YAML-loadable via ontology_yaml) and exposes none
+# of those. Current ontology behaviour is covered by test_kg_common_parity.py.
+# Skipped rather than deleted so the intent is preserved if a richer
+# ontology-introspection API is reintroduced.
+pytestmark = pytest.mark.skip(
+    reason="Targets the removed markdown-parsing ontology API "
+           "(entity_types/edge_types objects, get_rejection_counts, "
+           "get_extraction_prompt_context, case-insensitive validate). "
+           "Current ontology is frozenset-based; behaviour covered by "
+           "test_kg_common_parity.py.")
+
 
 class TestOntologyParsing:
     """Verify that ONTOLOGY.md is parsed correctly."""
