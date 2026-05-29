@@ -21,12 +21,19 @@ DEFAULT_HOST = "http://localhost:11434"
 TIMEOUT_SECONDS = 60
 
 
+DEFAULT_NODE_TYPES = [
+    "concept", "person", "source", "project", "insight",
+    "question", "practice", "place", "method", "tool",
+]
+
+
 def extract_triplets_from_text(
     text: str,
     edge_types: list[str],
     model: str = DEFAULT_MODEL,
     host: str = DEFAULT_HOST,
     max_tokens: int = 2048,
+    node_types: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Extract triplets from a text chunk using Ollama LLM.
@@ -44,6 +51,8 @@ def extract_triplets_from_text(
     if not text or len(text.strip()) < 20:
         return {"entities": [], "edges": []}
 
+    node_types = node_types or DEFAULT_NODE_TYPES
+
     prompt = f"""Extract triplets (subject, relationship, object) from the following text.
 
 For each relationship found, return:
@@ -53,7 +62,7 @@ For each relationship found, return:
 - verbatim evidence quote from the text (min 10 characters)
 - confidence: 0.9 deterministic / 0.7 NLP / 0.5 LLM
 
-Entity types: concept, person, source, project, insight, question, practice, place, method, tool
+Entity types: {", ".join(node_types)}
 
 Respond ONLY with valid JSON (no markdown, no explanation):
 {{
@@ -173,3 +182,102 @@ def extract_triplets_batch(
         result = extract_triplets_from_text(text, edge_types, model, host)
         results.append(result)
     return results
+
+
+# ---------------------------------------------------------------------------
+# Extractor — compatibility class over the functional API.
+#
+# The kg-common ontology refactor moved extraction to module-level functions
+# (extract_triplets_from_text), but ingest_obsidian.py, ingest_folder.py, and
+# mcp_server.py still import an `Extractor` class + `generate_entity_id`. This
+# class restores that interface: it wraps the functional API and does the
+# label→id resolution and field enrichment the callsites expect (the functional
+# API returns label-keyed entities/edges; callsites want id-resolved rows with
+# source_url / provenance / entity_type / edge_type).
+# ---------------------------------------------------------------------------
+
+
+def generate_entity_id(label: str) -> str:
+    """Stable entity id from a label (slug-based, matches ontology.slugify)."""
+    from second_brain.ontology import slugify
+    return slugify(label)
+
+
+class Extractor:
+    """Thin wrapper: ontology-aware triplet extraction returning id-resolved rows."""
+
+    def __init__(self, ontology, model: str | None = None, host: str | None = None):
+        self.ontology = ontology
+        # Default to the project's configured LOCAL_EXTRACTION_MODEL (e.g.
+        # llama3.2:3b — fast), NOT extract.py's DEFAULT_MODEL (qwen3:14b — a
+        # 9GB model that makes ingestion crawl). Caller can override.
+        if model is None or host is None:
+            try:
+                from second_brain import config
+                model = model or getattr(config, "LOCAL_EXTRACTION_MODEL", DEFAULT_MODEL)
+                host = host or getattr(config, "OLLAMA_HOST", DEFAULT_HOST)
+            except Exception:
+                model = model or DEFAULT_MODEL
+                host = host or DEFAULT_HOST
+        self.model = model
+        self.host = host
+        # Type vocabulary to constrain the LLM — pulled from the ontology so a
+        # custom ontology actually drives extraction (entity types AND edges).
+        self.edge_types = sorted(getattr(ontology, "EDGE_TYPES", []) or [])
+        self.node_types = sorted(getattr(ontology, "NODE_TYPES", []) or [])
+
+    def extract_from_text(
+        self, text: str, source_url: str = "", doc_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Extract entities + edges from text, id-resolved and enriched.
+
+        Returns {"entities": [...], "edges": [...]} where each entity has
+        id / entity_type / label / description / confidence / source_url /
+        provenance, and each edge has source_id / target_id / edge_type /
+        evidence / confidence / source_url. Edge endpoints are resolved from
+        the LLM's label references to entity ids; edges whose endpoints don't
+        resolve are dropped (fail-soft).
+        """
+        raw = extract_triplets_from_text(
+            text, self.edge_types, model=self.model, host=self.host,
+            node_types=self.node_types or None,
+        )
+
+        label_to_id: dict[str, str] = {}
+        entities: list[dict[str, Any]] = []
+        for ent in raw.get("entities", []):
+            label = (ent.get("label") or "").strip()
+            if not label:
+                continue
+            eid = generate_entity_id(label)
+            label_to_id[label] = eid
+            entities.append({
+                "id": eid,
+                "entity_type": ent.get("type") or "concept",
+                "label": label,
+                "description": (ent.get("meta") or {}).get("description", ""),
+                "confidence": float(ent.get("confidence", 0.5)),
+                "source_url": source_url,
+                "provenance": "llm_extraction",
+            })
+
+        edges: list[dict[str, Any]] = []
+        for edge in raw.get("edges", []):
+            src_label = (edge.get("source") or "").strip()
+            tgt_label = (edge.get("target") or "").strip()
+            src_id = label_to_id.get(src_label) or (
+                generate_entity_id(src_label) if src_label else None)
+            tgt_id = label_to_id.get(tgt_label) or (
+                generate_entity_id(tgt_label) if tgt_label else None)
+            if not src_id or not tgt_id:
+                continue
+            edges.append({
+                "source_id": src_id,
+                "target_id": tgt_id,
+                "edge_type": edge.get("type") or "ASSOCIATED_WITH",
+                "evidence": edge.get("evidence", ""),
+                "confidence": float(edge.get("confidence", 0.5)),
+                "source_url": source_url,
+            })
+
+        return {"entities": entities, "edges": edges}

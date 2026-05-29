@@ -7,3 +7,6 @@ ripser>=0.6.0
 ollama>=0.3.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
+duckdb>=0.10.0
+pyyaml>=6.0
+pyvis>=0.3.2

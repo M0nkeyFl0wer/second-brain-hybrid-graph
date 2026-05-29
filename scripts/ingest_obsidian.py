@@ -24,6 +24,8 @@ def main():
                         help="Path to Obsidian vault")
     parser.add_argument("--force", "-f", action="store_true",
                         help="Re-ingest all notes (ignore existing)")
+    parser.add_argument("--ontology", "-o", default=None,
+                        help="Path to a YAML ontology (default: built-in SecondBrainOntology)")
     args = parser.parse_args()
 
     if not args.vault:
@@ -38,7 +40,13 @@ def main():
     if not notes:
         return
 
-    ontology = Ontology()
+    from second_brain.ontology_yaml import load_ontology
+    ontology = load_ontology(args.ontology)
+    if args.ontology:
+        print(f"Ontology: {args.ontology} "
+              f"({len(ontology.NODE_TYPES)} node types, {len(ontology.EDGE_TYPES)} edge types)")
+    else:
+        print("Ontology: built-in SecondBrainOntology (default)")
     graph = Graph(ontology=ontology)
     try:
         extractor = Extractor(ontology)
