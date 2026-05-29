@@ -13,9 +13,9 @@ This module ships the class as a kg-common Ontology subclass so:
   - All 11 broken-import callsites work again (via the
     `from .ontology_kg_common import SecondBrainOntology as Ontology`
     alias appended to `second_brain/ontology.py`).
-  - Phase 5.2 of kg-common's PLAN lands — open-second-brain becomes the
-    second consumer (after cpaws) to subclass `kg_common.ontology.Ontology`,
-    proving the ABC is reusable across infrastructure-type KGs.
+  - The shared-substrate Ontology ABC is adopted — this project subclasses
+    `kg_common.ontology.Ontology`, proving the ABC is reusable across
+    infrastructure-type knowledge graphs.
 
 Module-level constants (`NODE_TYPES`, `EDGE_TYPES`, `EDGE_DOMAIN_RANGE`,
 `TYPE_ALIASES`) stay in `second_brain/ontology.py` for `scripts/enrich.py`

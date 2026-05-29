@@ -2,10 +2,13 @@
 Description=open-second-brain health check every 15 minutes
 After=network-online.target
 
+# __INSTALL_DIR__ is a placeholder — replace with your checkout path,
+# or run `bash setup.sh --install-timers` to substitute it automatically.
+
 [Service]
 Type=oneshot
-Environment=PYTHONPATH=/home/user/Projects/open-second-brain
-ExecStart=/home/user/Projects/open-second-brain/scripts/health_check.py
+Environment=PYTHONPATH=__INSTALL_DIR__
+ExecStart=__INSTALL_DIR__/scripts/health_check.py
 StandardOutput=journal
 StandardError=journal
 

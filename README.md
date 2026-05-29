@@ -69,6 +69,18 @@ python scripts/onboard.py
 
 Supports `.txt`, `.md`, `.pdf`, `.html`. PDFs need `pdftotext` (`sudo apt install poppler-utils` on Linux, `brew install poppler` on Mac).
 
+**Just want to see it work?** A small multi-domain demo corpus ships in the
+repo — 36 dog-domain notes (breed standards, vet research, municipal policy,
+journalism) deliberately shaped to surface cross-domain connections and a
+real contradiction. Ingest it in a minute:
+
+```bash
+python scripts/ingest_obsidian.py --vault examples/good-dog-corpus/vault
+python -m second_brain.check
+```
+
+See [`examples/good-dog-corpus/`](examples/good-dog-corpus/) for what to look for.
+
 **Search it:**
 
 ```bash

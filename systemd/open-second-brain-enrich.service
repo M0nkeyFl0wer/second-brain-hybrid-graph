@@ -3,15 +3,20 @@ Description=open-second-brain enrichment pass — LLM triplet extraction
 After=network-online.target
 Wants=network-online.target
 
+# __INSTALL_DIR__ is a placeholder for your checkout path. Replace it with
+# the absolute path to your clone, or run `bash setup.sh --install-timers`
+# which substitutes it for you. %h expands to your home directory.
+
 [Service]
 Type=oneshot
-Environment=PATH=/home/user/.local/bin:/usr/local/bin:/usr/bin:/bin
-Environment=PYTHONPATH=/home/user/Projects/open-second-brain
-ExecStart=/home/user/Projects/open-second-brain/scripts/enrich.py
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONPATH=__INSTALL_DIR__
+ExecStart=__INSTALL_DIR__/scripts/enrich.py
 StandardOutput=journal
 StandardError=journal
 
-# Security hardening: prevent OOM kill of writer (per ladybug rule #16)
+# Protect the graph writer from OOM-kill mid-checkpoint: a killed writer
+# can leave a poisoned WAL. Keep the writer off the OOM hit-list.
 OOMScoreAdjust=-200
 
 [Install]

@@ -21,3 +21,7 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+.vault-idx/
+chroma.sqlite3
+*.ldb
+*.ldb.wal

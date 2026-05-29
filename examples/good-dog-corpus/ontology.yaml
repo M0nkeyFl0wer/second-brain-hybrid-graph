@@ -1,0 +1,267 @@
+# Ontology for good-dog-corpus
+#
+# This file is the schema. The design narrative behind every choice
+# below — including alternatives considered and rejection rationale —
+# is in ONTOLOGY.md. Read that first if you want to understand why
+# the schema is what it is.
+#
+# Versioned. Extensions follow the discipline documented in
+# ONTOLOGY.md §7.
+
+version: "good-dog-corpus-v0.1"
+source: "hand-designed"
+designed_on: "2026-04-30"
+designed_by: "M0nkeyFl0wer"
+purpose: >
+  Worked example of ontology-first KG design for the SME framework.
+  The corpus exists to materialize the ontology, not the other way around.
+
+# --- Entity types ---------------------------------------------------
+#
+# Eight types. Rationale and rejected alternatives in ONTOLOGY.md §2.
+
+entity_types:
+
+  - id: breed
+    description: "A recognized dog breed or breed group"
+    examples: ["German Shepherd", "Border Collie", "American Pit Bull Terrier"]
+    notes: "First-class because breeds have registry authority and alias resolution as central tests"
+
+  - id: person
+    description: "Named individual: researcher, vet, trainer, journalist, council member"
+    notes: "One type, not per-role subtypes. Role information lives in edges."
+
+  - id: organization
+    description: "Kennel club, university, vet hospital, municipality, regulatory body"
+    fields:
+      is_regulatory: "boolean — whether this organization holds jurisdictional authority"
+
+  - id: publication
+    description: "Study, article, bylaw, recall notice — anything authored"
+    notes: "Subtypes encoded by source domain (file path), not by entity subtype"
+
+  - id: concept
+    description: "Idea or methodology: dominance theory, positive reinforcement, BSL"
+    notes: "First-class because concepts get superseded, regulated, and traversed in multi-hop"
+
+  - id: product
+    description: "Specific commercial product, brand, or SKU"
+    fields:
+      brand: "string — manufacturer name"
+
+  - id: event
+    description: "Recall announcement, council vote, study publication, attack incident"
+    fields:
+      timestamp: "ISO8601 — when the event occurred"
+      status: "active | resolved | ongoing"
+
+  - id: location
+    description: "City, park, shelter, jurisdiction"
+    fields:
+      jurisdiction_type: "municipal | regional | national"
+
+# --- Edge types with evidence rules --------------------------------
+#
+# Eleven types. Each registers an evidence rule for the phantom-edge
+# probe (Cat 10). Rationale and rejected alternatives in ONTOLOGY.md §3.
+
+edge_types:
+
+  - id: mentions
+    direction: "publication -> *"
+    description: "Base relation: a document mentions an entity"
+    evidence_rule:
+      type: "lexical"
+      method: "canonical_or_alias_substring_match"
+      threshold: 1
+      notes: "Matches canonical name or any registered alias in document text"
+
+  - id: alias_of
+    direction: "* -> *"
+    description: "Two surface forms refer to the same canonical entity"
+    evidence_rule:
+      type: "registry"
+      method: "authoritative_alias_list"
+      source: "ontology.yaml#aliases or breed_standards/* documents"
+
+  - id: supersedes
+    direction: "publication -> publication"
+    description: "Newer finding/policy/recommendation replaces older"
+    evidence_rule:
+      type: "explicit_marker"
+      method: "temporal_replacement_phrases"
+      patterns:
+        - "replaces"
+        - "withdrawn"
+        - "now recommended over"
+        - "supersedes"
+        - "superseded by"
+        - "no longer current"
+
+  - id: contradicts
+    direction: "publication -> publication"
+    description: "Two publications make incompatible claims about the same entity"
+    notes: "Distinct from supersedes: contradictory publications can be contemporaneous"
+    evidence_rule:
+      type: "claim_pair"
+      method: "shared_subject_with_opposed_predicate"
+      requires_human_grounding: true
+      notes: "v0.1 honest position: contradiction detection is a research problem, human-annotated"
+
+  - id: cites
+    direction: "publication -> publication"
+    description: "Explicit reference"
+    evidence_rule:
+      type: "explicit_reference"
+      method: "doi_url_or_citation_match"
+
+  - id: authored_by
+    direction: "publication -> person"
+    description: "Authorship"
+    evidence_rule:
+      type: "byline"
+      method: "author_field_match"
+
+  - id: affiliated_with
+    direction: "person -> organization"
+    description: "Person is affiliated with organization (currently — no time bounds in v0.1)"
+    evidence_rule:
+      type: "explicit_assertion"
+      method: "affiliation_phrase_match"
+      patterns:
+        - "<person>, <organization>"
+        - "<person> of <organization>"
+        - "<person> at <organization>"
+
+  - id: regulates
+    direction: "organization -> product OR concept"
+    description: "Regulatory body has jurisdiction over the entity"
+    requires:
+      source.is_regulatory: true
+    evidence_rule:
+      type: "regulatory_authority"
+      method: "scope_assertion_in_authoritative_document"
+
+  - id: subject_of
+    direction: "publication -> event OR concept"
+    description: "Document is primarily about a specific event or concept"
+    notes: "Distinct from mentions: subject_of is the primary topic, not just a reference"
+    evidence_rule:
+      type: "topic_match"
+      method: "title_or_abstract_subject_extraction"
+      requires_human_grounding: true
+
+  - id: member_of
+    direction: "breed -> breed OR person -> organization"
+    description: "Breed group membership, or person's organizational membership"
+    notes: "Reused across two relationship shapes; flagged for review in v0.2"
+    evidence_rule:
+      type: "registry_or_explicit"
+      method: "registered_in_taxonomy_or_explicit_membership_assertion"
+
+  - id: located_in
+    direction: "event OR organization -> location"
+    description: "Spatial scoping"
+    evidence_rule:
+      type: "explicit_location"
+      method: "location_field_or_address_match"
+
+# --- Aliases (the registry) ----------------------------------------
+#
+# Per-entity canonical alias mapping. Exercises Cat 4 (ingestion
+# integrity) directly. Breeds are the most common alias source in
+# the dog domain; this section will grow as the corpus fills in.
+
+aliases:
+
+  german_shepherd:
+    canonical: "German Shepherd"
+    aliases:
+      - "GSD"
+      - "Alsatian"
+      - "German Shepherd Dog"
+    source: "AKC breed registry"
+
+  pit_bull:
+    canonical: "American Pit Bull Terrier"
+    aliases:
+      - "Pit Bull"
+      - "APBT"
+      - "Pitbull"
+    source: "UKC breed registry"
+    notes: >
+      Distinct from American Staffordshire Terrier despite frequent
+      conflation in media. The conflation itself is a Cat 4 test:
+      a system that collapses APBT and AmStaff is silently merging
+      two registered breeds.
+
+  golden_retriever:
+    canonical: "Golden Retriever"
+    aliases:
+      - "Goldie"
+      - "Golden"
+    source: "AKC breed registry"
+
+# --- Out of scope --------------------------------------------------
+#
+# Documented exclusions. These are kept here so corpus contributors
+# know what was left out on purpose vs what was omitted by accident.
+
+out_of_scope:
+
+  - id: subjective_stance
+    description: "Opinion-level claims (BSL pros/cons as advocacy positions)"
+    reason: "Stance modeling is a separate problem; corpus stays factual"
+
+  - id: individual_dog_narratives
+    description: "Specific named dogs in adoption stories or local incidents"
+    reason: "Treated as character mentions, not graph entities; would explode entity count"
+
+  - id: image_content
+    description: "Visual content of source articles"
+    reason: "Out of textual KG scope"
+
+# --- Connection to SME categories ----------------------------------
+#
+# Mapping of which schema elements each SME category exercises.
+# Designed against the categories, not retrofitted.
+
+sme_category_coverage:
+
+  cat_1_factual_retrieval:
+    uses: ["mentions", "subject_of"]
+    representative_question: "What recalls happened to brand X in 2023?"
+
+  cat_2c_multi_hop:
+    uses: ["authored_by", "affiliated_with", "cites", "subject_of"]
+    examples:
+      - "vet author -> affiliation -> studies cited in council policy"
+
+  cat_3_contradiction:
+    uses: ["contradicts"]
+    seeded_pairs:
+      - "grain-free debate (DCM 2018 finding -> 2022 reassessment)"
+      - "dominance theory (1970s -> 2009 AVSAB position statement)"
+
+  cat_4_ingestion_integrity:
+    uses: ["alias_of"]
+    seeded_pairs:
+      - "GSD / German Shepherd / Alsatian (alias resolution test)"
+      - "Pit Bull / APBT / American Pit Bull Terrier"
+
+  cat_6_temporal:
+    uses: ["supersedes"]
+    seeded_chains:
+      - "Pet food recalls: announced -> investigated -> resolved"
+      - "Training methodology consensus shift: dominance theory -> positive reinforcement"
+
+  cat_8_ontology_coherence:
+    uses: "the entire ontology declared here vs the graph that gets built from /vault"
+    notes: "Cat 8 reads this file as the source-of-truth claim against the built graph"
+
+  cat_10_phantom_edges:
+    uses: "evidence_rule field on every edge type"
+    notes: >
+      First worked example of per-edge-type evidence registration.
+      The phantom-edge probe (proposed at SME #4) reads each edge
+      against the rule registered for its type.

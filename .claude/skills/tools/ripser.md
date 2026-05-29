@@ -164,7 +164,7 @@ def classify_features(dgms, dim=1):
 
 ### From Cosine Distance (Performance / Embedding Space)
 
-Used by elephant-room, cpaws-strong-coast for content topology:
+Used by content-engine projects for content topology:
 
 ```python
 from scipy.spatial.distance import cosine
@@ -316,7 +316,7 @@ def topology_report(conn):
 
 ## Content Coverage Gap Detection
 
-Used by elephant-room and cpaws-strong-coast. H1 features in content performance space indicate topics that should exist but don't:
+Used by content-engine projects. H1 features in content performance space indicate topics that should exist but don't:
 
 ```python
 def detect_coverage_gaps(performance_matrix, topic_names, maxdim=1):
@@ -408,7 +408,7 @@ print(f"Wasserstein distance: {d_wasserstein:.4f}")
 
 ## Severity Escalation Pattern
 
-Used by cpaws-strong-coast across multiple topology passes:
+Used across multiple topology passes:
 
 ```python
 def escalate_severity(findings, pass_count):

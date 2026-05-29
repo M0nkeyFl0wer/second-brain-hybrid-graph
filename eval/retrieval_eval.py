@@ -192,7 +192,9 @@ QUERIES: list[EvalQuery] = [
         category="global",
         query="content engine architecture patterns shared across projects",
         mode="global",
-        expected=["content", "engine", "strong coast", "elephant"],
+        # Customize `expected` to terms that actually appear in YOUR corpus —
+        # these are illustrative tokens for a multi-project content graph.
+        expected=["content", "engine", "architecture", "pattern"],
         description="Architectural pattern that recurs across projects",
     ),
     EvalQuery(
