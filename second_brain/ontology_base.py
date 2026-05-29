@@ -6,39 +6,7 @@ Subclass it (see second_brain/ontology.py) or load from YAML (ontology_yaml.py).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-
-
-@dataclass(frozen=True)
-class IdentityCriterion:
-    """What fields make two entities the same (OntoClean +I).
-
-    Orthogonal to TYPE_ALIASES: aliases answer "same name, different spelling";
-    this answers "what fields decide sameness when labels alone can't" (two
-    people both labelled 'John Smith' are distinct by date_of_birth).
-    """
-    node_type: str
-    keys: tuple                # fields whose tuple determines sameness
-    match: str = "exact"       # "exact" | "normalized" | "embedding"
-    threshold: float = 1.0     # only used when match == "embedding"
-
-
-@dataclass(frozen=True)
-class CompetencyQuestion:
-    """A question the graph exists to answer, bound to the schema it exercises.
-
-    The exercises_* binding is the point: a CQ failure is attributable to a
-    named edge type, and the inverse (edge types no CQ exercises) is a
-    corpus-free ghost detector.
-    """
-    id: str
-    question: str
-    exercises_node_types: tuple
-    exercises_edge_types: tuple
-    min_hops: int = 1
-    expects: str = ""
-
 
 # LadybugDB SQL-ish type → Python default value used when the field is missing
 # from a caller's kwargs. Project ontologies override via entity_field_schema()
@@ -240,76 +208,6 @@ class Ontology:
 
     def validate_edge_type(self, t: str) -> bool:
         return t in self.EDGE_TYPES or t in self.STRUCTURAL_EDGE_TYPES
-
-    # ------------------------------------------------------------------
-    # Identity criteria (resolution identity, OntoClean +I)
-    #
-    # `id` is storage identity (the surrogate PK). IDENTITY_CRITERIA is
-    # RESOLUTION identity — which surrogate-keyed rows are the same thing and
-    # should merge. Default empty preserves today's label-based dedup exactly;
-    # adoption is opt-in per type. The Phase-3 resolver (pipeline/resolve.py,
-    # currently an empty stub) should cluster on identity_key() instead of
-    # iterating labels — declaring this now is what keeps the criterion out of
-    # DBSCAN tuning later. Person/Organization/Document are shared-default
-    # candidates (they recur across consumers); domain types stay per-project.
-    # ------------------------------------------------------------------
-    IDENTITY_CRITERIA: dict = {}            # node_type -> IdentityCriterion
-
-    def identity_key(self, entity) -> tuple | None:
-        """The comparison key the resolver uses for sameness, per this type's
-        declared criterion. None => no criterion => fall back to label.
-        Resolves each key from a top-level attr or `properties`, and the label
-        field via this ontology's ENTITY_LABEL_FIELD (so 'label' vs
-        'canonical_name' consumers both work)."""
-        etype = getattr(entity, self.ENTITY_TYPE_FIELD, None) or getattr(entity, "entity_type", None)
-        crit = self.IDENTITY_CRITERIA.get(etype)
-        if crit is None:
-            return None
-
-        def field(name):
-            if name in ("label", self.ENTITY_LABEL_FIELD):
-                v = getattr(entity, self.ENTITY_LABEL_FIELD, None)
-                if v:
-                    return v
-            v = getattr(entity, name, None)
-            if v:
-                return v
-            props = getattr(entity, "properties", None) or {}
-            return props.get(name, "")
-        return tuple(field(k) for k in crit.keys)
-
-    # ------------------------------------------------------------------
-    # Competency questions (ontology ↔ grader binding)
-    # ------------------------------------------------------------------
-    COMPETENCY_QUESTIONS: tuple = ()
-    DISCOVERY_EDGE_TYPES: dict = {}         # edge_type -> reason (CQ-exempt, semantic)
-
-    def edge_type_coverage(self) -> dict:
-        """Partition DOMAIN edge types by competency coverage. Ranges over
-        EDGE_TYPES minus STRUCTURAL_EDGE_TYPES — structural edges (wikilinks,
-        untyped fallback) answer no domain question by construction.
-          served    - exercised by >=1 competency question
-          discovery - declared CQ-exempt (open-ended semantic)
-          ghost     - neither -> investigate (write the question, or drop the type)
-        Pure, local, deterministic: no corpus, no LLM. Only `ghost` needs action."""
-        structural = set(getattr(self, "STRUCTURAL_EDGE_TYPES", frozenset()))
-        domain = set(self.EDGE_TYPES) - structural
-        served = {e for cq in self.COMPETENCY_QUESTIONS
-                  for e in cq.exercises_edge_types} & domain
-        discovery = set(self.DISCOVERY_EDGE_TYPES) & domain
-        return {"served": served, "discovery": discovery,
-                "ghost": domain - served - discovery}
-
-    def undefined_cq_references(self) -> dict:
-        """CQs referencing node/edge types not in the declared vocabulary —
-        a typo or a missing type. Maps cq.id -> set of bad type names."""
-        out: dict = {}
-        for cq in self.COMPETENCY_QUESTIONS:
-            bad = (set(cq.exercises_node_types) - set(self.NODE_TYPES)) | (
-                set(cq.exercises_edge_types) - set(self.EDGE_TYPES) - set(self.STRUCTURAL_EDGE_TYPES))
-            if bad:
-                out[cq.id] = bad
-        return out
 
     def validate_grade(self, edge: str, src_type: str, tgt_type: str) -> bool:
         """True if (src_type, tgt_type) appears in EDGE_DOMAIN_RANGE[edge],

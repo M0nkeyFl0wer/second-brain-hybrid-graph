@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from itertools import product
 
-from second_brain.ontology_base import Ontology, IdentityCriterion, CompetencyQuestion
+from second_brain.ontology_base import Ontology
 
 from second_brain.ontology import (
     EDGE_TYPES as _EDGE_TYPES,
@@ -75,37 +75,6 @@ class SecondBrainOntology(Ontology):
     EDGE_DOMAIN_RANGE = _EDGE_DOMAIN_RANGE
     TYPE_ALIASES = _TYPE_ALIASES
     VERSION = "second-brain-1.0"
-
-    # Resolution identity (OntoClean +I). `person` uses the shared-universal
-    # default (identity is the name); `source` is keyed by URL/path, not its
-    # display label, so the same source cited two ways resolves to one node.
-    # Domain types (concept/insight/...) declare nothing -> fall back to label.
-    IDENTITY_CRITERIA = {
-        "person": IdentityCriterion("person", keys=("label",), match="normalized"),
-        "source": IdentityCriterion("source", keys=("source_url",), match="exact"),
-    }
-
-    # The questions this graph exists to answer. edge_type_coverage() reads
-    # these: these four exercise {LEARNED_FROM, CONFLICTS_WITH, PRACTICED_IN,
-    # ASKED_ABOUT, ANSWERS}; the inverse read flags the rest as ghost
-    # candidates (INSPIRED_BY/SUPPORTS/PART_OF/IMPLEMENTS/REQUIRES) — questions
-    # not yet written, not dead types. ASSOCIATED_WITH is excluded as structural.
-    COMPETENCY_QUESTIONS = (
-        CompetencyQuestion(
-            "sources-of-concept", "Which sources did a given concept come from?",
-            ("concept", "source"), ("LEARNED_FROM",), min_hops=1),
-        CompetencyQuestion(
-            "belief-conflicts", "Which of my beliefs contradict each other?",
-            ("concept",), ("CONFLICTS_WITH",), min_hops=1),
-        CompetencyQuestion(
-            "practice-to-project", "Which practices feed which projects?",
-            ("practice", "project"), ("PRACTICED_IN",), min_hops=1),
-        CompetencyQuestion(
-            "question-resolution",
-            "What insight or source answered a given open question?",
-            ("question", "concept", "insight", "source"),
-            ("ASKED_ABOUT", "ANSWERS"), min_hops=2),
-    )
 
     def __init__(self, path: str | None = None) -> None:
         self._source_path = path
