@@ -30,5 +30,18 @@
     {"canonical": "Salmonella", "members": ["Salmonella", "salmonella"]},
     {"canonical": "Rudolf Schenkel", "members": ["Rudolf Schenkel", "schenkel"]},
     {"canonical": "Dr. Lisa Freeman", "members": ["Dr. Lisa Freeman", "freeman"]}
-  ]
+  ],
+  "contrast": [
+    {"canonical": "FDA Center for Veterinary Medicine", "members": ["FDA Center for Veterinary Medicine (CVM)", "Center for Veterinary Medicine"]},
+    {"canonical": "brucellosis", "members": ["brucellosis"]},
+    {"canonical": "vitamin D toxicity", "members": ["vitamin D toxicity"]},
+    {"canonical": "Hill's Science Diet", "members": ["Hill's Science Diet"]},
+    {"canonical": "Hill's Prescription Diet", "members": ["Hill's Prescription Diet"]},
+    {"canonical": "Montreal", "members": ["Montreal"]},
+    {"canonical": "City of Montreal", "members": ["City of Montreal"]},
+    {"canonical": "Denver", "members": ["Denver"]},
+    {"canonical": "City and County of Denver", "members": ["City and County of Denver"]},
+    {"canonical": "Salmonella Kiambu", "members": ["Salmonella Kiambu"]}
+  ],
+  "_contrast_note": "Distinct referents that must NOT merge into the coreference clusters above (or across contrast groups). The main B-Cubed score is over 'clusters' only; run_er_eval reports merge-violations against 'clusters' + 'contrast' together as a precision guard. APBT-breed vs pit-bull-category is already enforced as two separate entries in 'clusters'."
 }
