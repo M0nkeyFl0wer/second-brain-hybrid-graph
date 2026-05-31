@@ -17,6 +17,8 @@ import os
 import urllib.request
 from typing import Any
 
+from second_brain.models import ExtractionResult
+
 logger = logging.getLogger(__name__)
 
 # Default extraction model. NOTE: a 14B model makes local ingestion crawl;
@@ -126,8 +128,12 @@ def extract_triplets_from_text(
             result = json.loads(resp.read().decode("utf-8"))
             response_text = result.get("response", "").strip()
 
-        # Parse JSON from response
-        return _parse_json_response(response_text)
+        # Parse JSON, then validate through the canonical Pydantic template.
+        # from_raw is fail-soft: schema-invalid entities/edges are dropped and
+        # logged rather than poisoning the batch. to_legacy_dict preserves the
+        # {entities, edges} dict contract this function's callers expect.
+        raw = _parse_json_response(response_text)
+        return ExtractionResult.from_raw(raw).to_legacy_dict()
 
     except Exception as ex:
         # Surface the failure instead of masking it. A silent empty return
@@ -192,12 +198,91 @@ def extract_triplets_openai(
         # OpenAI-compatible: choices[0].message.content holds the model output.
         choices = result.get("choices") or []
         content = (choices[0].get("message", {}).get("content", "") if choices else "").strip()
-        return _parse_json_response(content)
+        raw = _parse_json_response(content)
+        return ExtractionResult.from_raw(raw).to_legacy_dict()
     except Exception as ex:
         # Same fail-loud contract as the local path: surface the error so the
         # ingest refuses to declare success on a degraded/unauthorized backend.
         logger.warning("extract_triplets_openai failed (model=%s, base=%s): %s",
                        model, base, ex)
+        return {"entities": [], "edges": [], "_error": str(ex)}
+
+
+def instructor_available() -> bool:
+    """True iff the optional `instructor` extra (and openai SDK) are importable.
+
+    Kept as a function (not an import-time flag) so the core stays import-clean:
+    nothing pulls in instructor/openai unless this is called.
+    """
+    try:
+        import instructor  # noqa: F401
+        import openai  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def extract_triplets_instructor(
+    text: str,
+    node_types: list[str],
+    edge_types: list[str],
+    model: str,
+    base_url: str,
+    api_key: str = "ollama",
+    timeout: int = TIMEOUT_SECONDS,
+    max_retries: int = 2,
+) -> dict[str, Any]:
+    """Extract triplets via Instructor — structured output validated against the
+    `ExtractionResult` schema, with automatic retry-on-validation-error.
+
+    Opt-in only (`pip install 'open-second-brain[instructor]'`, then enable via
+    config/env). Works against any OpenAI-compatible endpoint, including Ollama's
+    `/v1` surface (`base_url="http://localhost:11434/v1"`, `api_key="ollama"`).
+    Unlike the urllib paths, Instructor drives the JSON schema from the model
+    itself, so there is no hand-written JSON shape in the prompt and no
+    `_parse_json_response` repair step — that is the whole point of taking the
+    dependency. Same fail-loud `_error` contract as the urllib backends.
+    """
+    try:
+        import instructor
+        from openai import OpenAI
+    except ImportError as ex:
+        raise RuntimeError(
+            "Instructor backend requested but not installed. "
+            "Install with: pip install 'open-second-brain[instructor]'"
+        ) from ex
+
+    if not text or len(text.strip()) < 20:
+        return {"entities": [], "edges": []}
+
+    client = instructor.from_openai(
+        OpenAI(base_url=base_url, api_key=api_key or "ollama", timeout=timeout),
+        mode=instructor.Mode.JSON,
+    )
+    # Schema comes from ExtractionResult; the prompt only needs the task + the
+    # allowed vocabulary (so the model picks valid types) and the text.
+    prompt = (
+        "Extract entities and the typed relationships between them from the "
+        "text below.\n"
+        f"Allowed entity types: {', '.join(node_types)}\n"
+        f"Allowed edge types: {', '.join(edge_types)}\n"
+        "Every edge needs a verbatim evidence quote from the text.\n\n"
+        f"Text:\n---\n{text[:4000]}\n---"
+    )
+    try:
+        result: ExtractionResult = client.chat.completions.create(
+            model=model,
+            response_model=ExtractionResult,
+            max_retries=max_retries,
+            temperature=0.1,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return result.to_legacy_dict()
+    except Exception as ex:
+        logger.warning(
+            "extract_triplets_instructor failed (model=%s, base=%s): %s",
+            model, base_url, ex,
+        )
         return {"entities": [], "edges": [], "_error": str(ex)}
 
 
@@ -329,6 +414,30 @@ class Extractor:
         self.edge_types = sorted(getattr(ontology, "EDGE_TYPES", []) or [])
         self.node_types = sorted(getattr(ontology, "NODE_TYPES", []) or [])
 
+        # Optional Instructor backend — schema-validated structured output with
+        # retry-on-validation-error. Off by default: the core ships no
+        # instructor/openai SDK. Enable with SECOND_BRAIN_USE_INSTRUCTOR=1 (or
+        # config.USE_INSTRUCTOR) AND `pip install 'open-second-brain[instructor]'`.
+        want_instructor = str(
+            os.environ.get("SECOND_BRAIN_USE_INSTRUCTOR")
+            or _cfg("USE_INSTRUCTOR", "")
+        ).strip().lower() in ("1", "true", "yes", "on")
+        self.use_instructor = want_instructor and instructor_available()
+        if want_instructor and not self.use_instructor:
+            logger.warning(
+                "USE_INSTRUCTOR is set but the 'instructor' extra is not "
+                "installed — falling back to the urllib backend. Install with: "
+                "pip install 'open-second-brain[instructor]'"
+            )
+        # OpenAI-compatible base for the instructor client (Ollama exposes /v1).
+        if self.backend == "openai":
+            base = self.remote_base.rstrip("/")
+            self._instructor_base = base if base.endswith("/v1") else base + "/v1"
+            self._instructor_key = self.api_key
+        else:
+            self._instructor_base = self.host.rstrip("/") + "/v1"
+            self._instructor_key = "ollama"
+
     def extract_from_text(
         self, text: str, source_url: str = "", doc_id: str | None = None,
     ) -> dict[str, Any]:
@@ -341,7 +450,13 @@ class Extractor:
         the LLM's label references to entity ids; edges whose endpoints don't
         resolve are dropped (fail-soft).
         """
-        if self.backend == "openai":
+        if self.use_instructor:
+            raw = extract_triplets_instructor(
+                text, self.node_types, self.edge_types,
+                model=self.model, base_url=self._instructor_base,
+                api_key=self._instructor_key,
+            )
+        elif self.backend == "openai":
             raw = extract_triplets_openai(
                 text, self.edge_types, model=self.remote_model,
                 api_base=self.remote_base, api_key=self.api_key,

@@ -27,6 +27,11 @@ class Graph:
         self.read_only = read_only
         self.db = None
         self.conn = None
+        # SHACL-vocabulary violations accumulated by bulk writes (entities or
+        # edges rejected for an out-of-ontology type). Machine-readable via
+        # ValidationViolation.to_shacl_dict(). Append-only across calls; assign
+        # `graph.last_violations = []` to start a fresh report.
+        self.last_violations: list = []
         self._open()
         if not read_only:
             self._init_schema()
@@ -257,6 +262,34 @@ class Graph:
     # Bulk writes (Parquet-based, 25x faster than iterative)
     # =========================================================================
 
+    def _record_entity_violations(self, invalid: list[dict]) -> None:
+        """Build + log SHACL-vocabulary violations for entities rejected on an
+        out-of-ontology type. Accumulates on self.last_violations; never raises."""
+        from .models import validation as v
+        for e in invalid:
+            viol = v.unknown_entity_type(e.get("id", ""), e.get("entity_type", ""))
+            self.last_violations.append(viol)
+        logger.info(
+            "Rejected %d entities (type not in ontology): %s",
+            len(invalid),
+            [viol.to_shacl_dict() for viol in self.last_violations[-len(invalid):]],
+        )
+
+    def _record_edge_violations(self, invalid: list[dict]) -> None:
+        """Build + log SHACL-vocabulary violations for edges rejected on an
+        out-of-ontology type. Accumulates on self.last_violations; never raises."""
+        from .models import validation as v
+        for e in invalid:
+            key = v.edge_key(
+                e.get("source_id", ""), e.get("edge_type", ""), e.get("target_id", "")
+            )
+            self.last_violations.append(v.unknown_edge_type(key, e.get("edge_type", "")))
+        logger.info(
+            "Rejected %d edges (type not in ontology): %s",
+            len(invalid),
+            [viol.to_shacl_dict() for viol in self.last_violations[-len(invalid):]],
+        )
+
     def bulk_add_entities(self, entities: list[dict]) -> int:
         """
         Bulk-load entities via COPY FROM Parquet.
@@ -265,11 +298,11 @@ class Graph:
         All validated against ontology before loading.
         Returns count of entities loaded (after validation filtering).
         """
-        valid = [e for e in entities
-                 if self.ontology.validate_entity_type(e["entity_type"])]
-        rejected = len(entities) - len(valid)
-        if rejected > 0:
-            logger.info("Rejected %d entities (type not in ontology)", rejected)
+        valid, invalid = [], []
+        for e in entities:
+            (valid if self.ontology.validate_entity_type(e["entity_type"]) else invalid).append(e)
+        if invalid:
+            self._record_entity_violations(invalid)
 
         if not valid:
             return 0
@@ -324,11 +357,11 @@ class Graph:
         provenance, created_at.
         All validated against ontology before loading.
         """
-        valid = [e for e in edges
-                 if self.ontology.validate_edge_type(e["edge_type"])]
-        rejected = len(edges) - len(valid)
-        if rejected > 0:
-            logger.info("Rejected %d edges (type not in ontology)", rejected)
+        valid, invalid = [], []
+        for e in edges:
+            (valid if self.ontology.validate_edge_type(e["edge_type"]) else invalid).append(e)
+        if invalid:
+            self._record_edge_violations(invalid)
 
         if not valid:
             return 0

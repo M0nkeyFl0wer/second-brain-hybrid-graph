@@ -60,6 +60,13 @@ MIN_CONFIDENCE = 0.5
 MAX_ENTITIES_PER_DOC = 200
 DEDUP_THRESHOLD = 0.92
 
+# Use the optional Instructor backend for LLM extraction (schema-validated
+# structured output + retry-on-validation-error). Requires the extra:
+#   pip install 'open-second-brain[instructor]'
+# Off by default — the core ships no instructor/openai SDK and uses urllib.
+# Override at runtime with SECOND_BRAIN_USE_INSTRUCTOR=1.
+USE_INSTRUCTOR = False
+
 # =============================================================================
 # HIDDEN CONNECTIONS
 # =============================================================================

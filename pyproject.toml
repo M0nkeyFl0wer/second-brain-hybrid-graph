@@ -28,12 +28,16 @@ dependencies = [
     "networkx>=3.2",
     "ollama>=0.3.0",
     "kg-common>=0.0.1",
+    "pydantic>=2.0",
 ]
 
 [project.optional-dependencies]
 dashboard = ["fastapi>=0.110.0", "uvicorn[standard]>=0.27.0"]
 mcp = ["mcp>=1.0.0"]
 topology = ["ripser>=0.6.0"]
+# Schema-validated LLM extraction via Instructor (OpenAI-compatible, incl.
+# Ollama's /v1 surface). Pulls in the openai SDK; the core path stays urllib.
+instructor = ["instructor>=1.0.0"]
 dev = ["pytest>=8.0", "pytest-mock", "pytest-timeout", "ruff"]
 
 [project.scripts]
