@@ -8,7 +8,7 @@
 # Versioned. Extensions follow the discipline documented in
 # ONTOLOGY.md §7.
 
-version: "good-dog-corpus-v0.1"
+version: "good-dog-corpus-v0.2"
 source: "hand-designed"
 designed_on: "2026-04-30"
 designed_by: "M0nkeyFl0wer"
@@ -78,7 +78,14 @@ edge_types:
 
   - id: alias_of
     direction: "* -> *"
-    description: "Two surface forms refer to the same canonical entity"
+    same_type: true   # v0.2: an alias never crosses entity type (SKOS altLabel / owl:sameAs)
+    description: "Two surface forms refer to the SAME canonical entity (same entity type)"
+    notes: >
+      v0.2: constrained to same-type. The gold set's `contrast` block exists to
+      prevent cross-type aliasing (e.g. Hill's[organization] != Hill's Science
+      Diet[product], Brucella canis[concept] != brucellosis[concept-as-disease]).
+      This is the entity-resolution / SKOS altLabel relation — registry- and
+      resolver-proposed, not freely LLM-extracted.
     evidence_rule:
       type: "registry"
       method: "authoritative_alias_list"
@@ -134,7 +141,7 @@ edge_types:
         - "<person> at <organization>"
 
   - id: regulates
-    direction: "organization -> product OR concept"
+    direction: "organization -> product | concept"
     description: "Regulatory body has jurisdiction over the entity"
     requires:
       source.is_regulatory: true
@@ -143,7 +150,7 @@ edge_types:
       method: "scope_assertion_in_authoritative_document"
 
   - id: subject_of
-    direction: "publication -> event OR concept"
+    direction: "publication -> event | concept"
     description: "Document is primarily about a specific event or concept"
     notes: "Distinct from mentions: subject_of is the primary topic, not just a reference"
     evidence_rule:
@@ -152,15 +159,32 @@ edge_types:
       requires_human_grounding: true
 
   - id: member_of
-    direction: "breed -> breed OR person -> organization"
-    description: "Breed group membership, or person's organizational membership"
-    notes: "Reused across two relationship shapes; flagged for review in v0.2"
+    direction: "person -> organization"
+    description: "Person's membership in an organization (= schema.org memberOf)"
+    notes: >
+      v0.2: narrowed to person -> organization. The breed-grouping sense was
+      split out into `grouped_under` — the v0.1 overload of one label across two
+      unrelated relation shapes (breed->breed and person->organization) is
+      resolved. OntoClean/identity: the two had incompatible endpoint identity
+      criteria, so one label was masking two relations.
     evidence_rule:
-      type: "registry_or_explicit"
-      method: "registered_in_taxonomy_or_explicit_membership_assertion"
+      type: "explicit"
+      method: "explicit_membership_assertion"
+
+  - id: grouped_under
+    direction: "breed -> breed"
+    description: "A breed belongs to a broader breed group, e.g. German Shepherd -> Herding Group (SKOS broader)"
+    notes: >
+      v0.2: split out of the overloaded `member_of`. Adds the taxonomic spine the
+      otherwise-flat (RR=1.0, no is-a) ontology lacked. Breed groups are
+      themselves `breed`-typed entities (the YAML treats a breed grouping as a
+      recognized breed).
+    evidence_rule:
+      type: "registry"
+      method: "registered_in_breed_taxonomy"
 
   - id: located_in
-    direction: "event OR organization -> location"
+    direction: "event | organization -> location"
     description: "Spatial scoping"
     evidence_rule:
       type: "explicit_location"

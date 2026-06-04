@@ -1,28 +1,33 @@
-"""Entity resolution — Phase A: deterministic, high-precision matchers.
+"""Entity resolution.
 
-The slug-identity baseline (`slugify(label)`) already has B-Cubed precision
-1.000; the whole gap to the 0.85 target is recall. So Phase A adds only
-*deterministic, high-precision* matchers that recover obvious coreference the
-slug rule misses, without dragging precision down:
+The slug-identity baseline (`slugify(label)`) has B-Cubed precision 1.000 on
+`eval/er_gold.json` but recall 0.510 (F1 0.675); the whole gap to the 0.85
+target is recall. The resolver recovers coreference the slug rule misses while
+holding precision.
 
+Phase A — deterministic, high-precision matchers:
   - normalized-equal : case / punctuation / underscore variants
-                       ("pit_bull" ↔ "Pit Bull", "U.S. FDA" ↔ "us fda")
   - plural           : singular ↔ plural ("...Terrier" ↔ "...Terriers")
   - acronym          : acronym ↔ expansion via exact stopword-skipping initials
-                       ("AKC" ↔ "American Kennel Club", "ACVIM" ↔ "American
-                       College of Veterinary Internal Medicine")
-  - surname          : single token ↔ a person's full name
-                       ("schenkel" ↔ "Rudolf Schenkel")
+                       ("AKC" ↔ "American Kennel Club"), with a proper-name guard
+                       so "CDC" does NOT match "canine dilated cardiomyopathy"
+  - surname          : single token ↔ a person's full name (person-typed)
 
-Deferred (later phases, see PLAN):
-  - containment + embedding/string similarity ("Hill's" ↔ "Hill's Pet Nutrition")
-  - LLM adjudication of pure synonyms ("Alsatian" ↔ "German Shepherd",
-    "bloat" ↔ "GDV")
+Phase B — looser/similarity matchers:
+  - acronym-subseq   : acronym ⊆ initials ("FDA" ⊆ "U.S. Food and Drug Admin.")
+  - legal-suffix     : "X" ↔ "X Inc." (corporate-suffix-only difference)
+  - embedding        : cosine ≥ DEDUP_THRESHOLD (0.92) AND compatible type.
+                       Own kNN blocking (synonyms share no token). On the graph's
+                       real vectors this lifts F1 to 0.874; the 0.92 cliff is
+                       sharp (0.90 collapses precision), so the threshold is a
+                       guard, not a tuning knob.
 
-This stage is pure and side-effect-free: it produces a ResolutionResult
-(clustering). Applying merges to the live LadybugDB graph is a separate,
-destructive step (Phase D) that must go through the `ladybug-surgery` skill —
-NOT done here.
+Deferred:
+  - Phase C: LLM adjudication of pure synonyms with no shared string/cheap-vector
+    signal ("Alsatian" ↔ "German Shepherd", "bloat" ↔ "GDV").
+  - Phase D: APPLYING merges to the live LadybugDB graph (repoint edges, fold
+    aliases, delete dup nodes) — destructive; must go through the
+    `ladybug-surgery` skill. This module only PROPOSES (pure ResolutionResult).
 """
 
 from __future__ import annotations
@@ -67,11 +72,14 @@ def tokens(label: str) -> list[str]:
 
 
 def _singularize(word: str) -> str:
+    # Words that look plural but aren't: "basis", "canis", "status", "class".
+    if word.endswith(("is", "us", "ss", "ous")):
+        return word
     if len(word) > 4 and word.endswith("ies"):
         return word[:-3] + "y"
     if len(word) > 3 and word.endswith("es") and word[-3] in "sxzo":
         return word[:-2]
-    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+    if len(word) > 3 and word.endswith("s"):
         return word[:-1]
     return word
 
@@ -152,6 +160,53 @@ def match_acronym(la, ta, lb, tb):
     return None
 
 
+# Corporate/legal suffixes that don't change a company's identity.
+LEGAL_SUFFIX = frozenset({
+    "inc", "incorporated", "llc", "ltd", "limited", "corp", "corporation",
+    "co", "company", "gmbh", "plc",
+})
+
+
+def _is_subsequence(short: str, long_: str) -> bool:
+    it = iter(long_)
+    return all(c in it for c in short)
+
+
+def match_acronym_subsequence(la, ta, lb, tb):
+    """Looser acronym match: the acronym is a *subsequence* (not exact prefix) of
+    the expansion's initials — handles dropped country/function words, e.g.
+    "FDA" <- "U.S. Food and Drug Administration" (initials "usfda")."""
+    a_acr, b_acr = is_acronym_form(la), is_acronym_form(lb)
+    if a_acr and not b_acr and len(tokens(lb)) >= 2:
+        short, long_ = la, lb
+    elif b_acr and not a_acr and len(tokens(la)) >= 2:
+        short, long_ = lb, la
+    else:
+        return None
+    if not any(w[:1].isupper() for w in long_.split()):  # proper-name guard
+        return None
+    s = normalize(short).replace(" ", "")
+    ini = initials(long_)
+    if len(s) < 3:  # 2-letter acronyms are too collision-prone for subsequence
+        return None
+    if s != ini and _is_subsequence(s, ini) and len(ini) <= len(s) + 3:
+        return ("acronym-subseq", 0.8, f"{s} ⊆ initials({normalize(long_)})={ini}")
+    return None
+
+
+def match_legal_suffix(la, ta, lb, tb):
+    """Merge "Hill's Pet Nutrition" ↔ "Hill's Pet Nutrition Inc." — identical
+    token sets except for corporate-suffix tokens. Narrow on purpose: it will
+    NOT merge "Hill's" ↔ "Hill's Pet Nutrition" (real words differ)."""
+    a_set, b_set = set(tokens(la)), set(tokens(lb))
+    if a_set == b_set or not a_set or not b_set:
+        return None
+    smaller, larger = (a_set, b_set) if len(a_set) < len(b_set) else (b_set, a_set)
+    if smaller < larger and (larger - smaller) <= LEGAL_SUFFIX:
+        return ("legal-suffix", 0.85, "differ only by a corporate suffix")
+    return None
+
+
 def match_surname(la, ta, lb, tb):
     # the multi-token side must be a person; single-token side is the surname
     def _try(single_label, single_type, full_label, full_type):
@@ -168,7 +223,31 @@ def match_surname(la, ta, lb, tb):
     return _try(la, ta, lb, tb) or _try(lb, tb, la, ta)
 
 
-MATCHERS = (match_normalized, match_plural, match_acronym, match_surname)
+MATCHERS = (
+    match_normalized,
+    match_plural,
+    match_acronym,
+    match_acronym_subsequence,
+    match_legal_suffix,
+    match_surname,
+)
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    if na == 0 or nb == 0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def _type_compatible(ta: str, tb: str) -> bool:
+    """Embedding merges are allowed only within a type, or against the generic
+    `concept`/unknown fallback — never between two distinct specific types."""
+    if ta == tb:
+        return True
+    return "concept" in (ta, tb) or "" in (ta, tb)
 
 
 class _UnionFind:
@@ -203,7 +282,12 @@ class EntityResolver:
     gold convention). Resolution is pure — no graph writes.
     """
 
-    def __init__(self, entities: list[dict]):
+    def __init__(
+        self,
+        entities: list[dict],
+        embeddings: dict[str, list[float]] | None = None,
+        embedding_threshold: float | None = None,
+    ):
         # de-dup identical labels, keep first type seen
         self.types: dict[str, str] = {}
         for e in entities:
@@ -211,6 +295,16 @@ class EntityResolver:
             if label and label not in self.types:
                 self.types[label] = (e.get("entity_type") or "").strip().lower()
         self.labels = list(self.types)
+        # Optional Tier-2 embedding similarity. Threshold defaults to
+        # config.DEDUP_THRESHOLD (finally consumed). Vectors keyed by label.
+        self.embeddings = {k: v for k, v in (embeddings or {}).items() if k in self.types}
+        if embedding_threshold is None:
+            try:
+                from second_brain import config
+                embedding_threshold = getattr(config, "DEDUP_THRESHOLD", 0.92)
+            except Exception:
+                embedding_threshold = 0.92
+        self.embedding_threshold = embedding_threshold
 
     def _candidate_pairs(self) -> set[frozenset]:
         """Blocking: only pairs that share a non-stopword token, or an
@@ -258,6 +352,10 @@ class EntityResolver:
                         left=a, right=b, rule=rule, confidence=conf, evidence=evidence))
                     break
 
+        # Tier 2 — embedding similarity (own blocking: kNN over vectors, since
+        # synonyms like "Alsatian"/"German Shepherd" share no token). Type-guarded.
+        matches.extend(self._embedding_matches(uf))
+
         clusters = [
             ResolutionCluster(canonical=self._pick_canonical(group), members=sorted(group))
             for group in uf.groups()
@@ -266,11 +364,31 @@ class EntityResolver:
         clusters.sort(key=lambda c: (-len(c.members), c.canonical.lower()))
         return ResolutionResult(clusters=clusters, matches=matches)
 
+    def _embedding_matches(self, uf: "_UnionFind") -> list[ResolutionMatch]:
+        """Union entity pairs whose embeddings are within threshold AND whose
+        types are compatible. O(n^2) over embedded entities (fine at this scale)."""
+        if len(self.embeddings) < 2:
+            return []
+        labels = list(self.embeddings)
+        out: list[ResolutionMatch] = []
+        for i in range(len(labels)):
+            for j in range(i + 1, len(labels)):
+                a, b = labels[i], labels[j]
+                if not _type_compatible(self.types[a], self.types[b]):
+                    continue
+                sim = _cosine(self.embeddings[a], self.embeddings[b])
+                if sim >= self.embedding_threshold:
+                    uf.union(a, b)
+                    out.append(ResolutionMatch(
+                        left=a, right=b, rule="embedding", confidence=round(sim, 3),
+                        evidence=f"cosine {sim:.3f} >= {self.embedding_threshold}"))
+        return out
+
     @staticmethod
     def _pick_canonical(group: list[str]) -> str:
         """Prefer the most descriptive surface form: most tokens, then longest,
         then a form containing an uppercase letter (a proper name over a slug)."""
         return max(
             group,
-            key=lambda l: (len(tokens(l)), len(l), any(c.isupper() for c in l)),
+            key=lambda lbl: (len(tokens(lbl)), len(lbl), any(c.isupper() for c in lbl)),
         )

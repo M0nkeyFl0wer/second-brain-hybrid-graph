@@ -61,8 +61,56 @@ class TestMatchers:
     def test_surname_requires_person(self):
         assert match_surname("schenkel", "concept", "Rudolf Schenkel", "person")
         assert match_surname("freeman", "concept", "Dr. Lisa Freeman", "person")
-        # not a person -> no surname match
+        # not a person -> no surname match (this guards Montreal ↔ City of Montreal)
         assert match_surname("freeman", "concept", "Dr. Lisa Freeman", "concept") is None
+
+
+class TestPhaseBMatchers:
+    def test_acronym_subsequence(self):
+        from second_brain.pipeline.resolve import match_acronym_subsequence
+        # FDA is a subsequence of initials("U.S. Food and Drug Administration")="usfda"
+        assert match_acronym_subsequence("FDA", "organization",
+                                         "U.S. Food and Drug Administration", "organization")
+        # but NOT of "FDA Center for Veterinary Medicine (CVM)" (no 'd' after 'f')
+        assert match_acronym_subsequence("FDA", "organization",
+                                         "FDA Center for Veterinary Medicine (CVM)",
+                                         "organization") is None
+
+    def test_legal_suffix(self):
+        from second_brain.pipeline.resolve import match_legal_suffix
+        assert match_legal_suffix("Hill's Pet Nutrition", "organization",
+                                  "Hill's Pet Nutrition Inc.", "organization")
+        # real-word difference is NOT a legal suffix
+        assert match_legal_suffix("Hill's", "organization",
+                                  "Hill's Pet Nutrition", "organization") is None
+
+    def test_singularizer_keeps_latin_is_us(self):
+        from second_brain.pipeline.resolve import _singularize
+        assert _singularize("basis") == "basis"
+        assert _singularize("canis") == "canis"
+        assert _singularize("terriers") == "terrier"
+
+
+class TestEmbeddingTier:
+    def test_merges_near_same_type_not_far_or_incompatible(self):
+        ents = [
+            {"label": "Alsatian", "entity_type": "breed"},
+            {"label": "German Shepherd", "entity_type": "breed"},
+            {"label": "goldfish", "entity_type": "breed"},
+            {"label": "Calgary", "entity_type": "location"},
+        ]
+        embs = {
+            "Alsatian": [1.0, 0.0, 0.0],
+            "German Shepherd": [0.99, 0.01, 0.0],   # near Alsatian, same type -> merge
+            "goldfish": [0.0, 1.0, 0.0],            # far -> stays separate
+            "Calgary": [0.98, 0.0, 0.0],            # near Alsatian but type location (distinct, specific)
+        }
+        result = EntityResolver(ents, embeddings=embs, embedding_threshold=0.92).resolve()
+        groups = {frozenset(c.members) for c in result.clusters}
+        assert frozenset({"Alsatian", "German Shepherd"}) in groups
+        assert frozenset({"goldfish"}) in groups
+        # breed vs location are distinct specific types -> never embedding-merged
+        assert frozenset({"Calgary"}) in groups
 
 
 class TestClustering:
@@ -93,41 +141,63 @@ class TestAgainstGold:
     def _gold(self):
         return json.loads((Path(__file__).parent.parent / "eval" / "er_gold.json").read_text())
 
-    def _eval(self):
-        from eval.er_metrics import bcubed, clusters_to_assignment
+    def _embeddings(self):
+        path = Path(__file__).parent.parent / "eval" / "er_gold_embeddings.json"
+        return json.loads(path.read_text()) if path.exists() else None
+
+    def _eval(self, use_embeddings: bool):
+        from eval.run_er_eval import (
+            bcubed_pr_f1,
+            clusters_to_assignment,
+            count_merge_violations,
+        )
         gold_data = self._gold()
         coref = [c["members"] for c in gold_data["clusters"]]
         contrast = [c["members"] for c in gold_data["contrast"]]
+        types = gold_data["types"]
         gold = clusters_to_assignment(coref)
         all_items = sorted(set(gold) | {m for g in contrast for m in g})
 
+        embeddings = self._embeddings() if use_embeddings else None
         result = EntityResolver(
-            [{"label": i, "entity_type": ""} for i in all_items]
+            [{"label": i, "entity_type": types.get(i, "")} for i in all_items],
+            embeddings=embeddings,
         ).resolve()
         predicted = {}
         for cid, c in enumerate(result.clusters):
             for m in c.members:
                 predicted[m] = cid
 
-        p, r, f1 = bcubed(predicted, gold)
-        from eval.run_er_eval import count_merge_violations
+        p, r, f1 = bcubed_pr_f1(gold, predicted)
         violations = count_merge_violations(predicted, coref + contrast)
         return p, r, f1, violations
 
     def test_recall_improves_over_slug_baseline(self):
-        from eval.run_er_eval import slug_baseline_assignment
-        from eval.er_metrics import bcubed, clusters_to_assignment
+        from eval.run_er_eval import (
+            bcubed_pr_f1,
+            clusters_to_assignment,
+            slug_baseline_assignment,
+        )
         coref = [c["members"] for c in self._gold()["clusters"]]
         gold = clusters_to_assignment(coref)
-        _, base_r, base_f1 = bcubed(slug_baseline_assignment(list(gold)), gold)
-        _, r, f1, _ = self._eval()
+        _, base_r, base_f1 = bcubed_pr_f1(gold, slug_baseline_assignment(list(gold)))
+        _, r, f1, _ = self._eval(use_embeddings=False)
         assert r > base_r and f1 > base_f1
 
-    def test_precision_held_and_no_violations(self):
-        p, _, _, violations = self._eval()
-        assert p == 1.0, "Phase A must stay high-precision"
-        assert violations == [], f"must-not-merge pairs were merged: {violations}"
+    def test_deterministic_floor_high_precision(self):
+        """Deterministic-only: high precision, no violations, ~0.83 band."""
+        p, _, f1, violations = self._eval(use_embeddings=False)
+        assert p == 1.0
+        assert violations == []
+        assert 0.80 <= f1 < 0.85
 
-    def test_f1_in_expected_phase_a_band(self):
-        _, _, f1, _ = self._eval()
-        assert 0.80 <= f1 < 0.85, f"Phase A expected ~0.808, got {f1:.3f}"
+    def test_full_resolver_meets_target(self):
+        """Deterministic + embedding tier (gold sidecar vectors @ DEDUP_THRESHOLD)
+        clears F1 0.85 with precision held and zero must-not-merge violations."""
+        if self._embeddings() is None:
+            import pytest
+            pytest.skip("gold embedding sidecar not present")
+        p, _, f1, violations = self._eval(use_embeddings=True)
+        assert p == 1.0, "embedding tier must not cost precision at the 0.92 cliff"
+        assert violations == [], f"must-not-merge pairs were merged: {violations}"
+        assert f1 >= 0.85, f"expected >= 0.85 (got {f1:.3f})"

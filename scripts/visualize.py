@@ -25,9 +25,9 @@ import sys
 from pathlib import Path
 
 try:
-    import real_ladybug as lb
-except ImportError:
     import ladybug as lb
+except ImportError:
+    import real_ladybug as lb
 
 import networkx as nx
 
@@ -115,7 +115,6 @@ def render(G: nx.Graph, homology_summary: dict, out_path: str) -> None:
         net.add_edge(u, v, title=data.get("edge_type", ""), color="#555")
 
     # Homology + structure summary panel
-    h0 = homology_summary.get("h0_features", "?")
     h1 = homology_summary.get("h1_features", "?")
     h1p = homology_summary.get("h1_persistent", "?")
     n_comp = nx.number_connected_components(G) if len(G) else 0

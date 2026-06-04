@@ -43,27 +43,34 @@ def _build_extraction_prompt(
 ) -> str:
     """The triplet-extraction prompt, shared by the local (Ollama) and remote
     (OpenAI-compatible) backends so both ask for exactly the same thing."""
-    return f"""Extract triplets (subject, relationship, object) from the following text.
+    return f"""Extract entities and the relationships (triplets) between them from the text below.
 
-For each relationship found, return:
-- source entity label
-- target entity label
-- edge type (one of: {", ".join(edge_types)})
-- verbatim evidence quote from the text (min 10 characters)
-- confidence: 0.9 deterministic / 0.7 NLP / 0.5 LLM
+LABEL RULES (important):
+- A label is the entity's natural surface form EXACTLY as it appears in the text
+  — e.g. "FDA", "German Shepherd", "grain-free diet", "Dr. Lisa Freeman".
+- Do NOT invent ids, slugs, snake_case keys, or prefixes (NOT "org_us_fda",
+  NOT "concept_dcm"). Use the human-readable name as written.
+- List every entity you reference. Every edge `source`/`target` MUST be the
+  label of an entity in your `entities` list.
 
-Entity types: {", ".join(node_types)}
+For each relationship return: source label, target label, edge type
+(one of: {", ".join(edge_types)}), a verbatim evidence quote from the text
+(min 10 characters), and confidence (0.9 deterministic / 0.7 NLP / 0.5 LLM).
+
+Entity types (use these exact lowercase values): {", ".join(node_types)}
 
 Respond ONLY with valid JSON (no markdown, no explanation):
 {{
   "entities": [
-    {{"label": "entity name", "type": "entity_type", "meta": {{}}}}
+    {{"label": "German Shepherd", "type": "breed", "meta": {{}}}},
+    {{"label": "dilated cardiomyopathy", "type": "concept", "meta": {{}}}},
+    {{"label": "2019 FDA DCM status report", "type": "event", "meta": {{}}}}
   ],
   "edges": [
     {{
-      "source": "source entity label",
-      "target": "target entity label",
-      "type": "EDGE_TYPE",
+      "source": "German Shepherd",
+      "target": "American Kennel Club",
+      "type": "{(edge_types[0] if edge_types else "mentions")}",
       "evidence": "exact quote from text",
       "confidence": 0.5
     }}
@@ -83,7 +90,7 @@ def extract_triplets_from_text(
     edge_types: list[str],
     model: str = DEFAULT_MODEL,
     host: str = DEFAULT_HOST,
-    max_tokens: int = 2048,
+    max_tokens: int = 3072,
     node_types: list[str] | None = None,
 ) -> dict[str, Any]:
     """
@@ -110,6 +117,10 @@ def extract_triplets_from_text(
         "model": model,
         "prompt": prompt,
         "stream": False,
+        # Disable reasoning models' chain-of-thought (e.g. qwen3): extraction
+        # wants structured JSON, not CoT (which burns the token budget and can
+        # return empty content). Non-thinking models ignore this field.
+        "think": False,
         "options": {
             "temperature": 0.1,
             "num_predict": max_tokens,
@@ -406,8 +417,15 @@ class Extractor:
             # Local Ollama. Default to LOCAL_EXTRACTION_MODEL (llama3.2:3b — fast),
             # NOT extract.py's DEFAULT_MODEL (qwen3:14b, which crawls). Caller can override.
             self.backend = "ollama"
-            self.model = model or _cfg("LOCAL_EXTRACTION_MODEL", DEFAULT_MODEL) or DEFAULT_MODEL
-            self.host = host or _cfg("OLLAMA_HOST", DEFAULT_HOST) or DEFAULT_HOST
+            self.model = (model or os.environ.get("SECOND_BRAIN_LOCAL_MODEL")
+                          or _cfg("LOCAL_EXTRACTION_MODEL", DEFAULT_MODEL) or DEFAULT_MODEL)
+            # SECOND_BRAIN_EXTRACT_HOST lets extraction target a different
+            # Ollama than embeddings (which use the ollama client's OLLAMA_HOST).
+            # This decouples a big extraction model on a GPU box from a light
+            # embedding model elsewhere, avoiding single-GPU VRAM contention.
+            self.host = (host or os.environ.get("SECOND_BRAIN_EXTRACT_HOST")
+                         or os.environ.get("OLLAMA_HOST")
+                         or _cfg("OLLAMA_HOST", DEFAULT_HOST) or DEFAULT_HOST)
 
         # Type vocabulary to constrain the LLM — pulled from the ontology so a
         # custom ontology actually drives extraction (entity types AND edges).
@@ -468,6 +486,21 @@ class Extractor:
                 node_types=self.node_types or None,
             )
 
+        # Canonicalize LLM-produced type strings to the ontology's declared
+        # casing. LLMs vary ("authored_by" vs "AUTHORED_BY", "Publication" vs
+        # "publication"); map case-insensitively so a YAML ontology (lowercase)
+        # and the default SecondBrainOntology (UPPER_SNAKE) both validate.
+        # Unknown types pass through unchanged for the graph to reject.
+        _node_canon = {nt.lower(): nt for nt in self.node_types}
+        _edge_canon = {et.lower(): et for et in self.edge_types}
+
+        def _canon_node(t):
+            return _node_canon.get((t or "").lower(), t or "concept")
+
+        def _canon_edge(t):
+            t = t or "ASSOCIATED_WITH"
+            return _edge_canon.get(t.lower(), t)
+
         label_to_id: dict[str, str] = {}
         entities: list[dict[str, Any]] = []
         for ent in raw.get("entities", []):
@@ -478,7 +511,7 @@ class Extractor:
             label_to_id[label] = eid
             entities.append({
                 "id": eid,
-                "entity_type": ent.get("type") or "concept",
+                "entity_type": _canon_node(ent.get("type")),
                 "label": label,
                 "description": (ent.get("meta") or {}).get("description", ""),
                 "confidence": float(ent.get("confidence", 0.5)),
@@ -499,7 +532,7 @@ class Extractor:
             edges.append({
                 "source_id": src_id,
                 "target_id": tgt_id,
-                "edge_type": edge.get("type") or "ASSOCIATED_WITH",
+                "edge_type": _canon_edge(edge.get("type")),
                 "evidence": edge.get("evidence", ""),
                 "confidence": float(edge.get("confidence", 0.5)),
                 "source_url": source_url,

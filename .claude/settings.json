@@ -1,0 +1,22 @@
+{
+  "_comment": "Project-local hooks for open-second-brain. The kg-common verification harness (docs/harness-verification/WIRING.md): Phase-0 observe-only eventlog + Phase-1 deny gate on action tools. Explicit pipe-matcher, never '*'. kg_common is editable-installed in .venv; scripts fall back to the sibling checkout via PYTHONPATH. The deny gate is fail-open until scripts/hooks/harness-gate-policy.json gets a rule (currently []).",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/scripts/hooks/harness-eventlog.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/scripts/hooks/harness-deny-gate.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

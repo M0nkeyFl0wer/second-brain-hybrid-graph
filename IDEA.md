@@ -150,7 +150,7 @@ The dashboard is how you *see* your thinking. The path animation is how you see 
 |------|-------------|--------|
 | Python 3.10+ | Runtime | [python.org](https://python.org) |
 | [Ollama](https://ollama.com) | Local AI — embeddings + extraction, no API key | [GitHub](https://github.com/ollama/ollama) |
-| [LadybugDB](https://ladybugdb.com) | Embedded graph DB with Cypher + vectors | [GitHub](https://github.com/LadybugDB/ladybug) · `pip install real_ladybug` |
+| [LadybugDB](https://ladybugdb.com) | Embedded graph DB with Cypher + vectors | [GitHub](https://github.com/LadybugDB/ladybug) · `pip install ladybug` |
 | [spaCy](https://spacy.io) | Named entity recognition | [GitHub](https://github.com/explosion/spaCy) · `pip install spacy` |
 | [NetworkX](https://networkx.org) | Betweenness, bridges, homology prep | [GitHub](https://github.com/networkx/networkx) · `pip install networkx` |
 | [Ripser](https://ripser.scikit-tda.org) | Persistent homology (optional) | [GitHub](https://github.com/scikit-tda/ripser.py) · `pip install ripser` |

@@ -21,7 +21,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Information Analysis",
 ]
 dependencies = [
-    "real_ladybug>=0.15.0",
+    "ladybug>=0.17.1",
     "pyarrow>=15.0.0",
     "pandas>=2.0.0",
     "spacy>=3.7.0",

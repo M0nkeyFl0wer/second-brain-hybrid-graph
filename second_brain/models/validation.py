@@ -106,6 +106,24 @@ def unknown_edge_type(edge_key: str, edge_type: str) -> ValidationViolation:
     )
 
 
+def grade_violation(
+    edge_key: str, edge_type: str, src_type: str, tgt_type: str
+) -> ValidationViolation:
+    """Edge rejected because its endpoint types violate the ontology's
+    domain/range (grade locality, EDGE_DOMAIN_RANGE)."""
+    return ValidationViolation(
+        focus_node=edge_key,
+        result_path="edge_type",
+        source_constraint="sh:ClassConstraintComponent",
+        result_message=(
+            f"grade violation: {edge_type} does not accept "
+            f"{src_type or '<unknown>'} -> {tgt_type or '<unknown>'} "
+            f"(not in ontology EDGE_DOMAIN_RANGE)"
+        ),
+        severity="violation",
+    )
+
+
 def missing_evidence(edge_key: str, edge_type: str, length: int) -> ValidationViolation:
     return ValidationViolation(
         focus_node=edge_key,

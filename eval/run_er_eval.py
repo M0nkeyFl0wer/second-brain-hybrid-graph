@@ -24,17 +24,47 @@ import argparse
 import json
 from pathlib import Path
 
-from eval.er_metrics import bcubed, clusters_to_assignment
+from kg_common.measure.er_quality import bcubed
 
 _GOLD_PATH = Path(__file__).parent / "er_gold.json"
+_EMB_PATH = Path(__file__).parent / "er_gold_embeddings.json"
 TARGET_F1 = 0.85
 
 
-def _load_gold(path: Path) -> tuple[list[list[str]], list[list[str]]]:
+def clusters_to_assignment(clusters: list[list]) -> dict:
+    """Convert a list of clusters (each a list of items) into an
+    item -> cluster-id assignment map. Items not appearing are simply absent."""
+    assignment: dict = {}
+    for cid, members in enumerate(clusters):
+        for item in members:
+            assignment[item] = cid
+    return assignment
+
+
+def bcubed_pr_f1(gold: dict, predicted: dict) -> tuple[float, float, float]:
+    """(precision, recall, F1) over the items present in BOTH maps, computed by
+    the canonical ``kg_common.measure.er_quality.bcubed``.
+
+    This is a thin ADAPTER, not a metric reimplementation: it restricts both
+    maps to their shared item set (so a resolver that drops items is scored on
+    what it kept — the original ``eval/er_metrics`` semantics) and unpacks
+    kg_common's ``BCubedScore`` into the ``(p, r, f1)`` tuple the eval and tests
+    expect. kg_common's ``bcubed`` is strict about identical keys (it raises on
+    a mismatch), which is why the shared-key restriction happens here rather
+    than inside the metric."""
+    shared = [i for i in gold if i in predicted]
+    g = {i: gold[i] for i in shared}
+    p = {i: predicted[i] for i in shared}
+    score = bcubed(g, p)
+    return score.precision, score.recall, score.f1
+
+
+def _load_gold(path: Path) -> tuple[list[list[str]], list[list[str]], dict[str, str]]:
     data = json.loads(path.read_text())
     coref = [c["members"] for c in data.get("clusters", [])]
     contrast = [c["members"] for c in data.get("contrast", [])]
-    return coref, contrast
+    types = data.get("types", {})
+    return coref, contrast, types
 
 
 def slug_baseline_assignment(items: list[str]) -> dict[str, str]:
@@ -58,9 +88,12 @@ def count_merge_violations(
     return violations
 
 
-def _resolver_assignment(items: list[str]) -> dict[str, str]:
+def _resolver_assignment(
+    items: list[str], types: dict[str, str], embeddings: dict[str, list[float]] | None
+) -> dict[str, str]:
     from second_brain.pipeline import EntityResolver
-    result = EntityResolver([{"label": i, "entity_type": ""} for i in items]).resolve()
+    entities = [{"label": i, "entity_type": types.get(i, "")} for i in items]
+    result = EntityResolver(entities, embeddings=embeddings).resolve()
     asg: dict[str, str] = {}
     for cid, cluster in enumerate(result.clusters):
         for m in cluster.members:
@@ -73,10 +106,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--gold", default=str(_GOLD_PATH))
     ap.add_argument("--pred", default=None, help="Resolver output JSON ({clusters:[{members:[...]}]}).")
     ap.add_argument("--resolver", action="store_true",
-                    help="Score the built-in deterministic EntityResolver.")
+                    help="Score the built-in EntityResolver.")
+    ap.add_argument("--no-embeddings", action="store_true",
+                    help="With --resolver, disable the embedding tier (string/deterministic only).")
     args = ap.parse_args(argv)
 
-    coref_clusters, contrast_clusters = _load_gold(Path(args.gold))
+    coref_clusters, contrast_clusters, types = _load_gold(Path(args.gold))
     gold = clusters_to_assignment(coref_clusters)
     coref_items = list(gold.keys())
     # universe for the precision guard = coref + contrast members
@@ -87,13 +122,16 @@ def main(argv: list[str] | None = None) -> int:
         predicted = clusters_to_assignment(pred_clusters)
         label = f"resolver output ({args.pred})"
     elif args.resolver:
-        predicted = _resolver_assignment(all_items)
-        label = "deterministic EntityResolver (Phase A)"
+        embeddings = None
+        if not args.no_embeddings and _EMB_PATH.exists():
+            embeddings = json.loads(_EMB_PATH.read_text())
+        predicted = _resolver_assignment(all_items, types, embeddings)
+        label = "EntityResolver" + ("" if embeddings else " (deterministic only)")
     else:
         predicted = slug_baseline_assignment(all_items)
         label = "slug-identity baseline (current system)"
 
-    p, r, f1 = bcubed(predicted, gold)
+    p, r, f1 = bcubed_pr_f1(gold, predicted)
     violations = count_merge_violations(predicted, coref_clusters + contrast_clusters)
 
     print(f"B-Cubed entity-resolution eval — {label}")

@@ -144,4 +144,26 @@ Extensions should be opened as issues against the SME repo with `[good-dog-corpu
 
 ## Status
 
-v0.1, drafted 2026-04-30. Subject to revision as the corpus content fills in and edge cases surface. Major revisions will be reflected in `ontology.yaml`'s `version` field and a changelog appended to this document.
+v0.2, 2026-06-04. Drafted v0.1 2026-04-30. Subject to revision as the corpus content fills in and edge cases surface. Major revisions are reflected in `ontology.yaml`'s `version` field and the changelog below.
+
+---
+
+## Changelog
+
+### v0.2 (2026-06-04) — OntoClean/OntoQA audit pass
+
+An OntoClean (rigidity/identity/unity) + OntoQA/WiseOWL structural audit found the schema sound — 7/8 entity types are clean rigid sortals with no anti-rigid roles masquerading as kinds — and surfaced three edge-level fixes, all applied here (entity types unchanged, so the entity-resolution gold set stays valid):
+
+1. **Split the overloaded `member_of`** (the v0.1 review flag). One label was carrying two relations with incompatible endpoint identity: `breed -> breed` and `person -> organization`. Now `member_of` is **person → organization** (= schema.org `memberOf`), and breed grouping moved to a new **`grouped_under` (breed → breed)** edge (SKOS `broader` semantics) — which also gives the otherwise-flat ontology (RR≈1.0, no `is-a`) a taxonomic spine.
+2. **Constrained `alias_of` to same-type** via a new `same_type: true` schema flag. An alias never crosses an entity type (`Hill's`[organization] ≠ `Hill's Science Diet`[product]); this is the SKOS `altLabel` / `owl:sameAs` / entity-resolution relation, registry- and resolver-proposed rather than freely LLM-extracted.
+3. **Fixed `OR` → `|` in `regulates`, `subject_of`, `located_in`.** The YAML loader splits alternation on `|`; the v0.1 `"product OR concept"` strings silently parsed as a single unknown type, leaving those edges unconstrained. They now carry their intended domain/range.
+
+**Standardized-framework alignment (interop, not replacement).** The schema stays the source of truth; these are the published vocabularies each part maps onto, for interoperability:
+
+| good-dog type/edge | Aligns to |
+|---|---|
+| person / organization / product / location / event | schema.org `Person` / `Organization` / `Product` / `Place` / `Event` |
+| publication, `authored_by` | Dublin Core (`creator`, `subject`), FRBR, schema.org `CreativeWork` |
+| concept, `alias_of`, `grouped_under` | SKOS (`Concept`, `altLabel`, `broader`) |
+| `cites` / `supersedes` / `contradicts` | CiTO (Citation Typing Ontology); `supersedes` also PROV-O |
+| `event` (vs continuant types) | BFO/DOLCE continuant↔occurrent split (noted, not modeled — a demo doesn't need a top-level upper ontology) |

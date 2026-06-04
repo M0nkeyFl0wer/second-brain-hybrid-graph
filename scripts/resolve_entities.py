@@ -24,13 +24,25 @@ from second_brain import config
 from second_brain.pipeline import EntityResolver
 
 
-def _load_entities(graph_dir: Path) -> list[dict]:
+def _load_entities(graph_dir: Path) -> tuple[list[dict], dict[str, list[float]]]:
+    """Return (entities, embeddings) from the graph. Embeddings power the
+    Tier-2 similarity matcher; entities without a vector simply don't get one."""
     from second_brain.graph import Graph
     g = Graph(graph_dir, read_only=True)
     try:
-        return g.query("MATCH (e:Entity) RETURN e.label AS label, e.entity_type AS entity_type")
+        rows = g.query(
+            "MATCH (e:Entity) RETURN e.label AS label, e.entity_type AS entity_type, "
+            "e.embedding AS embedding"
+        )
     finally:
         g.close()
+    entities = [{"label": r["label"], "entity_type": r["entity_type"]} for r in rows]
+    embeddings = {
+        r["label"]: list(r["embedding"])
+        for r in rows
+        if r.get("embedding") is not None
+    }
+    return entities, embeddings
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,6 +51,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", default=str(Path(config.GRAPH_DIR).parent / "resolution.json"))
     ap.add_argument("--min-cluster", type=int, default=2,
                     help="Only report clusters with at least this many members (default 2).")
+    ap.add_argument("--no-embeddings", action="store_true",
+                    help="Disable the Tier-2 embedding similarity matcher.")
     ap.add_argument("--apply", action="store_true",
                     help="(Phase D, not implemented) apply merges to the graph.")
     args = ap.parse_args(argv)
@@ -49,8 +63,10 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 2
 
-    entities = _load_entities(Path(args.graph))
-    result = EntityResolver(entities).resolve()
+    entities, embeddings = _load_entities(Path(args.graph))
+    if args.no_embeddings:
+        embeddings = None
+    result = EntityResolver(entities, embeddings=embeddings).resolve()
 
     reported = [c for c in result.clusters if len(c.members) >= args.min_cluster]
     Path(args.out).write_text(json.dumps(result.to_eval_dict(), indent=2, ensure_ascii=False))

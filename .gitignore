@@ -9,6 +9,10 @@ data/
 # Analysis outputs
 analysis-report-*.json
 
+# Verification harness runtime (kg_common.verify) + single-writer lockfiles
+.harness/
+*.writer-pid
+
 # Python
 __pycache__/
 *.pyc

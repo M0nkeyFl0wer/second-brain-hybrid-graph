@@ -7,22 +7,46 @@ Bulk ingestion uses COPY FROM Parquet (25x faster than iterative MERGE).
 Vector search uses native FLOAT[768] columns + array_cosine_similarity.
 """
 import logging
-import real_ladybug as lb
 import time
 import tempfile
 from pathlib import Path
+
+from kg_common.write.ladybug import (
+    GraphWriter,
+    _KG_COMMON_META_DDL,
+    _acquire_writer_lock,
+    _import_ladybug,
+    _release_writer_lock,
+)
+
 from .ontology import Ontology
 from . import config
 
 logger = logging.getLogger(__name__)
 
 
-class Graph:
-    """Knowledge graph backed by LadybugDB."""
+class Graph(GraphWriter):
+    """Knowledge graph backed by LadybugDB.
+
+    Subclasses kg_common's GraphWriter to inherit the single-writer pidfile
+    lock, the dual ladybug/real_ladybug import, and the KgCommonMeta stamp
+    (ontology class / version / checksum + kg_common version recorded in the
+    graph at write time) — while keeping open-second-brain's custom
+    FLOAT[768] Entity/Chunk/CommunityMeta schema, the EdgeNode hypergraph,
+    and all custom bulk/vector/query methods.
+
+    The ABC's generic `schema_ddl()` is intentionally NOT used: `_ensure_schema`
+    is overridden to run the custom DDL (`_init_schema`) and then stamp
+    KgCommonMeta. We also do NOT call `super().__init__()` — the base opens the
+    DB read-write unconditionally and has no read_only path — so the lock/open
+    logic is replicated here via the base's own module-level helpers (lock
+    semantics and dual-import stay identical to the base).
+    """
 
     def __init__(self, graph_dir: Path = None, ontology: Ontology = None,
                  read_only: bool = False):
-        self.graph_dir = graph_dir or config.GRAPH_DIR
+        # --- Public-API attributes (unchanged contract used across the repo) ---
+        self.graph_dir = Path(graph_dir) if graph_dir else config.GRAPH_DIR
         self.ontology = ontology or Ontology()
         self.read_only = read_only
         self.db = None
@@ -32,17 +56,63 @@ class Graph:
         # ValidationViolation.to_shacl_dict(). Append-only across calls; assign
         # `graph.last_violations = []` to start a fresh report.
         self.last_violations: list = []
-        self._open()
-        if not read_only:
-            self._init_schema()
-            # Run schema migrations if needed (adds columns, etc.)
+
+        # --- Base-class private attrs that inherited GraphWriter methods
+        # (execute / query / _stamp_meta / flush / close) read. Mirror them
+        # onto the same objects as the public attrs. ---
+        self._db_path = self.graph_dir
+        self._ontology = self.ontology
+        self._audit_log_path = None
+        self._lockfile = None
+
+        self.graph_dir.parent.mkdir(parents=True, exist_ok=True)
+
+        if read_only:
+            # No writer lock, no schema DDL, no meta stamp, no migrations.
+            ldb = _import_ladybug()
+            self.db = ldb.Database(str(self.graph_dir), read_only=True)
+            self.conn = ldb.Connection(self.db)
+            self._db = self.db
+            self._conn = self.conn
+            return
+
+        # Write path: acquire the single-writer pidfile lock first (friendly
+        # PID-bearing error on contention), then open read-write, run the
+        # custom schema + KgCommonMeta stamp, then migrations. On any failure
+        # below the lock, release the pidfile so the next attempt isn't
+        # falsely blocked (mirrors the base __init__ try/except contract).
+        self._lockfile = _acquire_writer_lock(self._db_path)
+        try:
+            ldb = _import_ladybug()
+            self.db = ldb.Database(str(self.graph_dir))
+            self.conn = ldb.Connection(self.db)
+            self._db = self.db
+            self._conn = self.conn
+            self._ensure_schema()
             from .migrations import ensure_schema_version
             ensure_schema_version(self.conn)
+        except Exception:
+            _release_writer_lock(self._lockfile)
+            self._lockfile = None
+            raise
 
-    def _open(self):
-        self.graph_dir.parent.mkdir(parents=True, exist_ok=True)
-        self.db = lb.Database(str(self.graph_dir), read_only=self.read_only)
-        self.conn = lb.Connection(self.db)
+    def _ensure_schema(self) -> None:
+        """Custom open-second-brain schema, then the kg-common meta stamp.
+
+        Overrides GraphWriter._ensure_schema so we keep the FLOAT[768]
+        Entity/Chunk/CommunityMeta + EdgeNode hypergraph + 5 edge tables +
+        FTS index (`_init_schema`) INSTEAD of the ABC's generic `schema_ddl()`.
+        We still create the KgCommonMeta table and call the inherited
+        `_stamp_meta()` so the graph records which ontology version / checksum
+        + kg_common version wrote it.
+        """
+        self._init_schema()
+        try:
+            self._conn.execute(_KG_COMMON_META_DDL)
+        except Exception as exc:
+            logger.warning("KgCommonMeta DDL failed (may pre-exist): %s", exc)
+        self._stamp_meta()
+        logger.info("Schema ensured (custom + KgCommonMeta) for %s", self.graph_dir)
 
     def _init_schema(self):
         """Create node and edge tables if they don't exist."""
@@ -234,6 +304,21 @@ class Graph:
         if not self.ontology.validate_edge_type(edge_type):
             return False
 
+        # Grade-locality: when both endpoint types are known, enforce the
+        # ontology's domain/range. Unknown endpoints fall through to the MERGE.
+        rows = self.query(
+            "MATCH (e:Entity) WHERE e.id = $src OR e.id = $tgt "
+            "RETURN e.id AS id, e.entity_type AS t",
+            parameters={"src": source_id, "tgt": target_id},
+        )
+        tmap = {r["id"]: r.get("t") for r in rows}
+        st, tt = tmap.get(source_id), tmap.get(target_id)
+        if st is not None and tt is not None and not self.ontology.validate_grade(edge_type, st, tt):
+            from .models import validation as v
+            self.last_violations.append(v.grade_violation(
+                v.edge_key(source_id, edge_type, target_id), edge_type, st, tt))
+            return False
+
         self.conn.execute("""
             MATCH (a:Entity {id: $src}), (b:Entity {id: $tgt})
             MERGE (a)-[r:RELATES_TO {edge_type: $etype}]->(b)
@@ -289,6 +374,49 @@ class Graph:
             len(invalid),
             [viol.to_shacl_dict() for viol in self.last_violations[-len(invalid):]],
         )
+
+    def _record_grade_violations(self, invalid: list[dict]) -> None:
+        """Build + log SHACL-vocabulary violations for edges rejected on
+        grade locality (endpoint types not in the ontology's EDGE_DOMAIN_RANGE).
+        Each dict carries `_src_type`/`_tgt_type` set by `_grade_filter`."""
+        from .models import validation as v
+        for e in invalid:
+            key = v.edge_key(
+                e.get("source_id", ""), e.get("edge_type", ""), e.get("target_id", "")
+            )
+            self.last_violations.append(v.grade_violation(
+                key, e.get("edge_type", ""),
+                e.get("_src_type", ""), e.get("_tgt_type", ""),
+            ))
+        logger.info(
+            "Rejected %d edges (grade locality): %s",
+            len(invalid),
+            [viol.to_shacl_dict() for viol in self.last_violations[-len(invalid):]],
+        )
+
+    def _grade_filter(self, edges: list[dict]) -> tuple[list[dict], list[dict]]:
+        """Split `edges` by grade locality (EDGE_DOMAIN_RANGE). An edge is
+        rejected only when BOTH endpoint types are known in the graph AND the
+        ontology's `validate_grade` disallows the (src_type, tgt_type) pair.
+        Unconstrained edge types pass automatically (validate_grade returns
+        True); endpoints whose type can't be resolved (node not yet written)
+        fall through to the MERGE, which no-ops on a missing endpoint."""
+        type_map = {
+            r["id"]: r.get("entity_type")
+            for r in self.query(
+                "MATCH (e:Entity) RETURN e.id AS id, e.entity_type AS entity_type"
+            )
+        }
+        ok, bad = [], []
+        for e in edges:
+            st = type_map.get(e.get("source_id"))
+            tt = type_map.get(e.get("target_id"))
+            if (st is not None and tt is not None
+                    and not self.ontology.validate_grade(e["edge_type"], st, tt)):
+                bad.append({**e, "_src_type": st, "_tgt_type": tt})
+            else:
+                ok.append(e)
+        return ok, bad
 
     def bulk_add_entities(self, entities: list[dict]) -> int:
         """
@@ -362,6 +490,12 @@ class Graph:
             (valid if self.ontology.validate_edge_type(e["edge_type"]) else invalid).append(e)
         if invalid:
             self._record_edge_violations(invalid)
+
+        # Grade-locality enforcement (EDGE_DOMAIN_RANGE): drop edges whose
+        # endpoint types the ontology disallows. No-op for unconstrained edges.
+        valid, grade_invalid = self._grade_filter(valid)
+        if grade_invalid:
+            self._record_grade_violations(grade_invalid)
 
         if not valid:
             return 0
@@ -530,8 +664,26 @@ class Graph:
                     return results
         return results
 
+    def flush(self) -> None:
+        """Cycle the connection to flush buffered writes, keeping BOTH the
+        public `conn` and the base `_conn` handle pointing at the new
+        connection. (The inherited GraphWriter.flush rebinds only `_conn`,
+        which would leave `self.conn` stale.)"""
+        ldb = _import_ladybug()
+        self._conn = ldb.Connection(self._db)
+        self.conn = self._conn
+
     def close(self):
-        if self.conn:
+        # Drop the connection then the database (Lady releases its own file
+        # lock here), keeping the public + base attrs in sync.
+        if getattr(self, "conn", None) is not None:
             self.conn = None
-        if self.db:
+        self._conn = None
+        if getattr(self, "db", None) is not None:
             self.db = None
+        self._db = None
+        # Release the single-writer pidfile LAST (no-op in read_only mode,
+        # where _lockfile is None). Order matters: a sibling spinning on the
+        # pidfile must not see it vanish before Lady's lock actually releases.
+        _release_writer_lock(getattr(self, "_lockfile", None))
+        self._lockfile = None

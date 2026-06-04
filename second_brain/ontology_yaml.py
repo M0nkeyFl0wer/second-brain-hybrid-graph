@@ -54,8 +54,18 @@ class YamlOntology(Ontology):
         dr: dict[str, list[tuple[str, str]]] = {}
         for e in doc.get("edge_types", []):
             eid = e.get("id")
+            if not eid:
+                continue
+            # `same_type: true` restricts domain/range to the diagonal
+            # (src type == tgt type) — the SKOS-altLabel / entity-resolution
+            # constraint that an alias never crosses an entity type. Takes
+            # precedence over a "* -> *" direction (which would otherwise mean
+            # unconstrained).
+            if e.get("same_type"):
+                dr[eid] = [(t, t) for t in sorted(self.NODE_TYPES)]
+                continue
             direction = (e.get("direction") or "").strip()
-            if not eid or "->" not in direction:
+            if "->" not in direction:
                 continue
             left, right = (s.strip() for s in direction.split("->", 1))
             srcs = ents if left == "*" else [s.strip() for s in left.split("|")]

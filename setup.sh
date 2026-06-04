@@ -59,7 +59,7 @@ mkdir -p data ingest briefings
 echo ""
 echo "Verifying installation..."
 python3 -c "
-import real_ladybug; print(f'  LadybugDB: {real_ladybug.__version__}')
+import ladybug; print(f'  LadybugDB: {ladybug.__version__}')
 import pyarrow; print(f'  PyArrow: {pyarrow.__version__}')
 import spacy; print(f'  spaCy: {spacy.__version__}')
 import networkx; print(f'  NetworkX: {networkx.__version__}')
