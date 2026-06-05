@@ -620,6 +620,21 @@ class Graph(GraphWriter):
         result = self.query(QUERIES["document_count"])
         return result[0]["cnt"] if result else 0
 
+    def type_distribution(self) -> dict:
+        """Entity type distribution (overrides GraphWriter bi-temporal version)."""
+        rows = self.query(
+            "MATCH (e:Entity) RETURN e.entity_type AS t, count(*) AS c"
+        )
+        return {r["t"]: r["c"] for r in rows}
+
+    def edge_type_distribution(self) -> dict:
+        """Edge type distribution (overrides GraphWriter bi-temporal version)."""
+        rows = self.query(
+            "MATCH (a:Entity)-[e:RELATES_TO]->(b:Entity) "
+            "RETURN e.edge_type AS t, count(*) AS c"
+        )
+        return {r["t"]: r["c"] for r in rows}
+
     def find_path(self, source_label: str, target_label: str,
                   max_hops: int = 4) -> list:
         """Find typed paths between two entities by label."""
