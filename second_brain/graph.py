@@ -436,6 +436,14 @@ class Graph(GraphWriter):
             return 0
 
         import pandas as pd
+
+        # Deduplicate by id — keep last occurrence (highest confidence
+        # if caller sorted that way). Prevents COPY PK violations.
+        seen = {}
+        for e in valid:
+            seen[e["id"]] = e
+        valid = list(seen.values())
+
         df = pd.DataFrame(valid)
 
         # Ensure all required columns exist with defaults
