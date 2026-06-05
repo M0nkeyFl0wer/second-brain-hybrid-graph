@@ -13,8 +13,8 @@ sys.path.insert(0, ".")
 from second_brain.graph import Graph
 from second_brain.extract import Extractor
 from second_brain.embed import embed_text
-from second_brain.ontology import Ontology
-from second_brain.obsidian import scan_vault, chunk_text
+from second_brain.ontology import slugify
+from second_brain.obsidian import scan_vault
 from second_brain import config
 
 
@@ -136,7 +136,7 @@ def main():
             # Add tags as entities
             for tag in note["tags"]:
                 tag_entity = {
-                    "id": f"tag_{tag}",
+                    "id": f"tag_{slugify(tag)}",
                     "entity_type": "concept",
                     "label": tag,
                     "description": f"Tag: #{tag}",
@@ -197,8 +197,10 @@ def main():
                   f"failed and the graph has 0 edges.")
             print(f"   The extraction backend (Ollama @ {getattr(extractor,'host','?')}) "
                   f"likely timed out or was unreachable.")
-            print(f"   Documents + entities were stored, but NO relationships were "
-                  f"extracted. Re-run when the backend is responsive.")
+            print(
+                "   Documents + entities were stored, but NO relationships were "
+                "extracted. Re-run when the backend is responsive."
+            )
         else:
             print(f"Ingestion complete in {elapsed:.1f}s.")
             if extract_failures:
@@ -208,19 +210,19 @@ def main():
         print(f"  Total entities:      {graph.entity_count()}")
         print(f"  Total edges:         {edge_count}")
         print(f"  Total documents:     {graph.document_count()}")
-        print(f"\nNext steps:")
-        print(f"  Search:    python scripts/search_cli.py -q 'your query'")
-        print(f"  Analyze:   python scripts/run_analysis.py")
-        print(f"  Reflect:   python scripts/daily_briefing.py")
+        print("\nNext steps:")
+        print("  Search:    python scripts/search_cli.py -q 'your query'")
+        print("  Analyze:   python scripts/run_analysis.py")
+        print("  Reflect:   python scripts/daily_briefing.py")
 
         # Ontology rejections (optional — not all ontology types track these)
         rejections = (ontology.get_rejection_counts()
                       if hasattr(ontology, "get_rejection_counts") else {})
         if rejections:
-            print(f"\nOntology rejections:")
+            print("\nOntology rejections:")
             for type_name, count in list(rejections.items())[:10]:
                 print(f"  {type_name}: {count}")
-            print(f"  Tip: Consider adding frequently rejected types to ONTOLOGY.md")
+            print("  Tip: Consider adding frequently rejected types to ONTOLOGY.md")
     finally:
         graph.close()
 

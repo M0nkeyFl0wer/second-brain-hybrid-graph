@@ -165,6 +165,9 @@ def slugify(label: str) -> str:
     if not label:
         return "unknown"
     slug = label.lower().strip()
+    # Normalize hyphens and underscores to single underscores
+    slug = re.sub(r'[-_]+', '_', slug)
+    # Replace non-alphanumeric with underscores
     slug = re.sub(r'[^a-z0-9]+', '_', slug)
     slug = re.sub(r'_+', '_', slug)
     slug = slug.strip('_')
