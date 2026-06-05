@@ -1,309 +1,271 @@
+#!/usr/bin/env python3
 """
-Nightly enrichment script — LLM pass to extract triplets from recent notes.
+Incremental enrichment script for open-second-brain.
 
-Schedule: runs every 4 hours via systemd timer (duckdb has no pg_cron).
-Can also be run manually: python scripts/enrich.py
+Schedule: runs every 4 hours via systemd timer.
+Manual use:
+    python scripts/enrich.py --vault /path/to/vault
 
-What it does:
-1. Find notes modified since last enrichment run
-2. Chunk and embed them (if not already)
-3. Extract triplets (entity-relationship-entity with evidence)
-4. Write to graph (entities + edges)
-5. Log enrichment results to enrichment.log
-
-Enrichment is epistemically sovereign — no engagement feedback,
-no audience data flows back into the KG (per kg-ingestion principle).
+This script is deliberately graph-only for now. The older DuckDB-hybrid
+version used stale GraphWriter/ChunkStore APIs and different DB paths
+(brain.ldb / chunks.duckdb). Until the DuckDB substrate is wired into core
+ingest, this enrichment pass writes only to the current LadybugDB Graph API.
 """
 
-import json
+from __future__ import annotations
+
+import argparse
+import hashlib
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
-# Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# ---------------------------------------------------------------------------
-# EXPERIMENTAL STAGE — the DuckDB-hybrid enrichment loop.
-#
-# This is the "enrichment" feedback loop of the pipeline (chunk -> embed ->
-# extract -> graph, with chunks/embeddings in DuckDB). It is NOT part of the
-# minimum working core (ingest -> graph -> query/viz). It is currently stale
-# against the consolidated `Graph` API: it was written for an older
-# `GraphWriter` (write_entity / write_edge / init_schema / checkpoint) +
-# `PipelineError` interface that the refactor renamed/removed. Reconciling it
-# (and unifying its DB paths — brain.ldb / chunks.duckdb — with the core's
-# config.GRAPH_DIR) is tracked work. Until then it fails loud and honest
-# rather than with a raw ImportError. See README "Pipeline maturity".
-# ---------------------------------------------------------------------------
-try:
-    from second_brain.chunk_store import ChunkStore
-    from second_brain.graph import GraphWriter, PipelineError  # not on Graph yet
-    from second_brain.ontology import slugify, validate_edge
-    from second_brain.extract import extract_triplets_from_text
-except ImportError as _exc:
-    sys.stderr.write(
-        "\n[experimental] scripts/enrich.py — the DuckDB-hybrid enrichment loop "
-        "is not yet reconciled to the current Graph API and cannot run.\n"
-        f"  ({_exc})\n"
-        "  The working pipeline is: ingest_obsidian.py -> graph -> "
-        "check.py / search_cli.py / visualize.py.\n"
-        "  See the README 'Pipeline maturity' section.\n\n"
-    )
-    sys.exit(2)
+from second_brain import config
+from second_brain.embed import embed_text
+from second_brain.extract import Extractor
+from second_brain.graph import Graph
+from second_brain.obsidian import scan_vault
+from second_brain.ontology_yaml import load_ontology
 
-VAULT_PATH = Path.home() / "obsidian-vault"
-DATA_DIR = Path(__file__).parent.parent / "data"
-CHUNK_STORE_PATH = DATA_DIR / "chunks.duckdb"
-GRAPH_DB_PATH = DATA_DIR / "brain.ldb"
+
+DATA_DIR = config.GRAPH_DIR.parent
 LAST_RUN_FILE = DATA_DIR / "enrichment_last_run.txt"
 ENRICHMENT_LOG = DATA_DIR / "enrichment.log"
-CONFIG_PATH = Path(__file__).parent.parent / "config" / "edge_types.json"
-
-# LLM config (Ollama)
-OLLAMA_HOST = "http://localhost:11434"
-OLLAMA_MODEL = "qwen3:14b"
-
-
-def get_last_run_time() -> datetime:
-    """Get timestamp of last successful enrichment run."""
-    if LAST_RUN_FILE.exists():
-        with open(LAST_RUN_FILE) as f:
-            ts = f.read().strip()
-            return datetime.fromisoformat(ts)
-    # First run: process all notes
-    return datetime(1970, 1, 1, tzinfo=timezone.utc)
-
-
-def set_last_run_time(ts: datetime) -> None:
-    """Update last run timestamp."""
-    LAST_RUN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(LAST_RUN_FILE, "w") as f:
-        f.write(ts.isoformat())
 
 
 def log(msg: str) -> None:
     """Log to enrichment.log with timestamp."""
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     ENRICHMENT_LOG.parent.mkdir(parents=True, exist_ok=True)
-    with open(ENRICHMENT_LOG, "a") as f:
+    with open(ENRICHMENT_LOG, "a", encoding="utf-8") as f:
         f.write(f"[{stamp}] {msg}\n")
     print(f"[enrich] {msg}")
 
 
-def get_edge_types() -> list[str]:
-    """Load enabled edge types from config."""
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH) as f:
-            config = json.load(f)
-            return config.get("edge_types", [])
-    return []
+def get_last_run_time(path: Path = LAST_RUN_FILE) -> datetime:
+    """Get timestamp of last successful enrichment run."""
+    if path.exists():
+        with open(path, encoding="utf-8") as f:
+            return datetime.fromisoformat(f.read().strip())
+    return datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
-def get_recent_notes(since: datetime) -> list[Path]:
-    """Find notes modified since last enrichment run."""
-    if not VAULT_PATH.exists():
-        log(f"Vault not found: {VAULT_PATH}")
-        return []
+def set_last_run_time(ts: datetime, path: Path = LAST_RUN_FILE) -> None:
+    """Update last run timestamp."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(ts.isoformat())
 
+
+def select_recent_notes(vault_path: str, since: datetime) -> list[dict]:
+    """Return notes whose source file mtime is newer than since."""
     notes = []
-    for md in VAULT_PATH.rglob("*.md"):
-        mtime = datetime.fromtimestamp(md.stat().st_mtime, tz=timezone.utc)
+    for note in scan_vault(vault_path):
+        mtime = datetime.fromtimestamp(Path(note["path"]).stat().st_mtime, tz=timezone.utc)
         if mtime > since:
-            notes.append(md)
+            notes.append(note)
     return notes
 
 
-def enrich_note(
-    note_path: Path,
-    chunk_store: ChunkStore,
-    writer: GraphWriter,
-    edge_types: list[str],
-) -> dict[str, int]:
-    """
-    Enrich a single note: chunk → embed → extract triplets → write to graph.
-
-    Returns {entities_written, edges_written, chunks_created}.
-    """
-    results = {"entities": 0, "edges": 0, "chunks": 0}
-
-    # Read note content
-    with open(note_path) as f:
-        content = f.read().strip()
-
-    if not content:
-        return results
-
-    title = note_path.stem
-    source_uri = str(note_path)
-
-    # Chunk the note (split by paragraphs)
-    chunks = chunk_text(content, title, source_uri)
-
-    # Check which chunks already have embeddings
-    existing_chunks = []
-    for chunk in chunks:
-        existing = chunk_store.get_chunk_by_id(chunk["id"])
-        if existing and existing.get("embedded_at"):
-            existing_chunks.append(chunk)
-
-    # Skip fully embedded notes
-    if len(existing_chunks) == len(chunks):
-        log(f"  {note_path.name}: already current ({len(chunks)} chunks)")
-        return results
-
-    # Write new chunks
-    for chunk in chunks:
-        results["chunks"] += 1
-
-    # Extract triplets via LLM
-    all_entities = []
-    all_edges = []
-
-    for chunk in chunks:
-        triplets = extract_triplets_from_text(
-            chunk["body"],
-            edge_types=edge_types,
-            model=OLLAMA_MODEL,
-            host=OLLAMA_HOST,
-        )
-        all_entities.extend(triplets.get("entities", []))
-        all_edges.extend(triplets.get("edges", []))
-
-    # Deduplicate entities by slug
-    seen = {}
-    for entity in all_entities:
-        sid = slugify(entity["label"])
-        if sid not in seen or entity.get("confidence", 0) > seen[sid].get("confidence", 0):
-            seen[sid] = entity
-    unique_entities = list(seen.values())
-
-    # Validate edges (domain/range check)
-    valid_edges = []
-    for edge in all_edges:
-        # Look up entity types
-        source_type = _resolve_entity_type(edge.get("source"), unique_entities)
-        target_type = _resolve_entity_type(edge.get("target"), unique_entities)
-        is_valid, err = validate_edge(edge.get("type", ""), source_type, target_type)
-        if is_valid:
-            valid_edges.append(edge)
-
-    # Write entities
-    for entity in unique_entities:
-        if writer.write_entity({
-            "id": slugify(entity["label"]),
-            "label": entity["label"],
-            "entity_type": entity.get("type", "concept"),
-            "meta": {"source": source_uri},
-        }):
-            results["entities"] += 1
-
-    # Write edges
-    for edge in valid_edges:
-        source_id = slugify(edge.get("source", ""))
-        target_id = slugify(edge.get("target", ""))
-        if writer.write_edge({
-            "source": source_id,
-            "target": target_id,
-            "type": edge.get("type"),
-            "evidence": edge.get("evidence", ""),
-            "confidence": edge.get("confidence", 0.5),
-            "extraction": "LLM",
-        }):
-            results["edges"] += 1
-
-    log(f"  {note_path.name}: {results['entities']} entities, {results['edges']} edges, {results['chunks']} chunks")
-    return results
+def _wikilink_entity_id(label: str) -> str:
+    digest = hashlib.sha256(label.encode()).hexdigest()[:16]
+    return f"wikilink_{digest}"
 
 
-def _resolve_entity_type(label: str, entities: list[dict]) -> str:
-    """Resolve the entity_type for a label from the entity list."""
-    for e in entities:
-        if e.get("label") == label:
-            return e.get("type", "concept")
-    return "concept"
-
-
-def chunk_text(content: str, title: str, source_uri: str) -> list[dict[str, Any]]:
-    """
-    Split note content into chunks by paragraph.
-
-    Returns list of chunk dicts with id, doc_id, source_uri, body, chunk_index.
-    """
-    import uuid
-    paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
-    chunks = []
-    for i, para in enumerate(paragraphs):
-        chunk_id = str(uuid.uuid5(uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8"), f"{source_uri}:{i}"))
-        chunks.append({
-            "id": chunk_id,
-            "doc_id": slugify(title),
-            "source_uri": source_uri,
-            "title": title,
-            "body": para,
-            "chunk_index": i,
+def _add_obsidian_entities(note: dict, result: dict, ontology) -> None:
+    """Add deterministic entities/edges derived from Obsidian metadata."""
+    for tag in note["tags"]:
+        result["entities"].append({
+            "id": f"tag_{tag}",
+            "entity_type": "concept",
+            "label": tag,
+            "description": f"Tag: #{tag}",
+            "confidence": 0.8,
+            "source_url": note["path"],
+            "provenance": "obsidian_tag",
         })
-    return chunks
+
+    if not ontology.validate_edge_type("ASSOCIATED_WITH"):
+        return
+
+    for link_target in note["wikilinks"]:
+        link_id = _wikilink_entity_id(link_target)
+        result["entities"].append({
+            "id": link_id,
+            "entity_type": "concept",
+            "label": link_target,
+            "description": f"Linked note: [[{link_target}]]",
+            "confidence": 0.8,
+            "source_url": note["path"],
+            "provenance": "obsidian_wikilink",
+        })
+        result["edges"].append({
+            "source_id": note["doc_id"],
+            "target_id": link_id,
+            "edge_type": "ASSOCIATED_WITH",
+            "confidence": 0.9,
+            "source_url": note["path"],
+            "provenance": "obsidian_wikilink",
+        })
 
 
-def main() -> None:
-    """Run enrichment pass on all notes modified since last run."""
-    log("=== Starting enrichment pass ===")
+def enrich_note(note: dict, graph: Graph, extractor: Extractor, ontology, embed: bool) -> dict[str, int]:
+    """Extract entities/edges from one note and write through Graph API."""
+    result = extractor.extract_from_text(
+        note["body"], source_url=note["path"], doc_id=note["doc_id"]
+    )
+    _add_obsidian_entities(note, result, ontology)
+
+    graph.add_document(note["doc_id"], note["path"], note["title"])
+
+    stats = {
+        "entities_seen": len(result["entities"]),
+        "entities_written": 0,
+        "edges_seen": len(result["edges"]),
+        "edges_written": 0,
+        "embedding_failures": 0,
+        "extract_failures": 1 if result.get("_error") else 0,
+    }
+
+    seen_entities = {}
+    for entity in result["entities"]:
+        eid = entity["id"]
+        if eid not in seen_entities or entity.get("confidence", 0) > seen_entities[eid].get("confidence", 0):
+            seen_entities[eid] = entity
+
+    for entity in seen_entities.values():
+        written = graph.add_entity(
+            entity["id"],
+            entity["entity_type"],
+            entity["label"],
+            description=entity.get("description", ""),
+            confidence=entity.get("confidence", 0.5),
+            source_url=entity.get("source_url", note["path"]),
+            provenance=entity.get("provenance", "llm_extraction"),
+        )
+        if written:
+            stats["entities_written"] += 1
+
+        if embed and written:
+            try:
+                emb_text = f"{entity['label']}: {entity.get('description', '')}"
+                graph.set_embedding(entity["id"], embed_text(emb_text))
+            except Exception:
+                stats["embedding_failures"] += 1
+
+    for edge in result["edges"]:
+        written = graph.add_edge(
+            edge["source_id"],
+            edge["target_id"],
+            edge["edge_type"],
+            confidence=edge.get("confidence", 0.5),
+            evidence=edge.get("evidence", ""),
+            source_url=edge.get("source_url", note["path"]),
+            provenance=edge.get("provenance", "llm_extraction"),
+        )
+        if written:
+            stats["edges_written"] += 1
+
+    return stats
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Incrementally enrich an Obsidian vault")
+    parser.add_argument("--vault", "-v", default=config.VAULT_PATH, help="Path to Obsidian vault")
+    parser.add_argument("--ontology", "-o", default=None, help="YAML ontology path")
+    parser.add_argument("--graph", default=str(config.GRAPH_DIR), help="Graph DB path")
+    parser.add_argument("--last-run-file", default=str(LAST_RUN_FILE), help="Last-run marker path")
+    parser.add_argument("--limit", type=int, default=None, help="Limit notes processed (smoke tests)")
+    parser.add_argument("--force", action="store_true", help="Process all notes regardless of last-run marker")
+    parser.add_argument("--dry-run", action="store_true", help="Scan and extract, but do not write graph")
+    parser.add_argument("--embed", action="store_true", help="Embed new/updated entities during enrichment")
+    args = parser.parse_args()
+
+    if not args.vault:
+        log("No vault path configured. Set VAULT_PATH or pass --vault.")
+        return 2
 
     start = datetime.now(timezone.utc)
-    edge_types = get_edge_types()
+    last_run_file = Path(args.last_run_file)
+    since = datetime(1970, 1, 1, tzinfo=timezone.utc) if args.force else get_last_run_time(last_run_file)
 
-    if not edge_types:
-        log("No edge types configured. Skipping (run onboard.py first).")
-        return
+    log("=== Starting enrichment pass ===")
+    log(f"Vault: {args.vault}")
+    log(f"Processing notes modified since {since.isoformat()}")
 
-    last_run = get_last_run_time()
-    log(f"Processing notes modified since {last_run.isoformat()}")
+    notes = select_recent_notes(args.vault, since)
+    if args.limit is not None:
+        notes = notes[:args.limit]
+    log(f"Found {len(notes)} notes to process")
 
-    recent_notes = get_recent_notes(last_run)
-    log(f"Found {len(recent_notes)} notes to process")
-
-    if not recent_notes:
+    if not notes:
+        set_last_run_time(start, last_run_file)
         log("No new notes to process")
-        set_last_run_time(start)
-        return
+        return 0
 
-    # Initialize stores
-    chunk_store = ChunkStore(CHUNK_STORE_PATH)
-    writer = GraphWriter(GRAPH_DB_PATH)
+    ontology = load_ontology(args.ontology)
+    extractor = Extractor(ontology)
 
+    totals = {
+        "entities_seen": 0,
+        "entities_written": 0,
+        "edges_seen": 0,
+        "edges_written": 0,
+        "embedding_failures": 0,
+        "extract_failures": 0,
+        "errors": 0,
+    }
+
+    graph = None
     try:
-        writer.init_schema()
+        if not args.dry_run:
+            graph = Graph(graph_dir=Path(args.graph), ontology=ontology)
 
-        total_entities = 0
-        total_edges = 0
-        total_chunks = 0
-        errors = 0
-
-        for note_path in recent_notes:
+        for i, note in enumerate(notes, 1):
             try:
-                result = enrich_note(note_path, chunk_store, writer, edge_types)
-                total_entities += result["entities"]
-                total_edges += result["edges"]
-                total_chunks += result["chunks"]
-            except PipelineError as ex:
-                log(f"  Pipeline error on {note_path.name}: {ex}")
-                errors += 1
+                if args.dry_run:
+                    result = extractor.extract_from_text(note["body"], source_url=note["path"], doc_id=note["doc_id"])
+                    stats = {
+                        "entities_seen": len(result["entities"]),
+                        "entities_written": 0,
+                        "edges_seen": len(result["edges"]),
+                        "edges_written": 0,
+                        "embedding_failures": 0,
+                        "extract_failures": 1 if result.get("_error") else 0,
+                    }
+                else:
+                    stats = enrich_note(note, graph, extractor, ontology, args.embed)
+                for key, value in stats.items():
+                    totals[key] += value
+                log(
+                    f"  [{i}/{len(notes)}] {note['relative_path']}: "
+                    f"{stats['entities_written']}/{stats['entities_seen']} entities, "
+                    f"{stats['edges_written']}/{stats['edges_seen']} edges"
+                )
             except Exception as ex:
-                log(f"  Error on {note_path.name}: {ex}")
-                errors += 1
+                totals["errors"] += 1
+                log(f"  [{i}/{len(notes)}] {note['relative_path']}: ERROR {ex}")
 
-        writer.checkpoint()
-        set_last_run_time(start)
-
-        elapsed = (datetime.now(timezone.utc) - start).total_seconds()
-        log(f"=== Enrichment complete: {total_entities} entities, {total_edges} edges, {total_chunks} chunks in {elapsed:.1f}s ({errors} errors) ===")
-
+        if graph is not None:
+            graph.flush()
+        set_last_run_time(start, last_run_file)
     finally:
-        writer.close()
-        chunk_store.close()
+        if graph is not None:
+            graph.close()
+
+    elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+    log(
+        "=== Enrichment complete: "
+        f"{totals['entities_written']}/{totals['entities_seen']} entities, "
+        f"{totals['edges_written']}/{totals['edges_seen']} edges, "
+        f"{totals['extract_failures']} extraction failures, "
+        f"{totals['errors']} errors in {elapsed:.1f}s ==="
+    )
+
+    return 1 if totals["errors"] else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

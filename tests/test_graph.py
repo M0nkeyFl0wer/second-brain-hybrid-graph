@@ -12,7 +12,6 @@ Tests cover:
   - Persistence across close/reopen
 """
 import time
-import pytest
 import numpy as np
 
 
@@ -61,6 +60,7 @@ class TestEntityCRUD:
             "MATCH (e:Entity {id: 'e1'}) RETURN e.updated_at AS t")
         # Count should still be 1 (MERGE, not duplicate)
         assert graph.entity_count() == 1
+        assert rows_after[0]["t"] >= rows_before[0]["t"]
 
 
 class TestEdgeCRUD:
@@ -79,6 +79,13 @@ class TestEdgeCRUD:
         graph.add_entity("a", "concept", "A")
         graph.add_entity("b", "concept", "B")
         result = graph.add_edge("a", "b", "DESTROYS")
+        assert result is False
+        assert graph.edge_count() == 0
+
+    def test_add_edge_missing_endpoint(self, graph):
+        """Adding an edge with a missing endpoint should not report success."""
+        graph.add_entity("a", "concept", "A")
+        result = graph.add_edge("a", "missing", "SUPPORTS")
         assert result is False
         assert graph.edge_count() == 0
 

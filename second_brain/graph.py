@@ -312,6 +312,8 @@ class Graph(GraphWriter):
             parameters={"src": source_id, "tgt": target_id},
         )
         tmap = {r["id"]: r.get("t") for r in rows}
+        if source_id not in tmap or target_id not in tmap:
+            return False
         st, tt = tmap.get(source_id), tmap.get(target_id)
         if st is not None and tt is not None and not self.ontology.validate_grade(edge_type, st, tt):
             from .models import validation as v
