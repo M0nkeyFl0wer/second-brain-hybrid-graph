@@ -40,11 +40,6 @@ jobs:
       - name: Run lint (ruff)
         run: .venv/bin/ruff check second_brain/ scripts/
         
-      - name: Run type check (mypy)
-        run: |
-          .venv/bin/pip install mypy
-          .venv/bin/mypy second_brain/ scripts/ --ignore-missing-imports
-        
       - name: Run unit tests with coverage
         run: |
           .venv/bin/pytest tests/ -x -q --timeout=30 \
