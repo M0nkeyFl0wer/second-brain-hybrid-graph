@@ -1,0 +1,125 @@
+# GitHub Actions CI Workflow
+# .github/workflows/ci.yml
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3.12-venv
+          
+      - name: Create virtual environment
+        run: python3.12 -m venv .venv
+          
+      - name: Install dependencies
+        run: |
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e .
+          .venv/bin/pip install pytest-cov
+          
+      - name: Run lint (ruff)
+        run: .venv/bin/ruff check second_brain/ scripts/
+        
+      - name: Run type check (mypy)
+        run: |
+          .venv/bin/pip install mypy
+          .venv/bin/mypy second_brain/ scripts/ --ignore-missing-imports
+        
+      - name: Run unit tests with coverage
+        run: |
+          .venv/bin/pytest tests/ -x -q --timeout=30 \
+            --cov=second_brain --cov=scripts \
+            --cov-report=term-missing --cov-report=xml
+        env:
+          PYTHONPATH: .
+          
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
+  eval:
+    name: Evaluation Gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: test
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3.12-venv
+          
+      - name: Create virtual environment
+        run: python3.12 -m venv .venv
+          
+      - name: Install dependencies
+        run: |
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e .
+          .venv/bin/pip install sme-eval
+          
+      - name: Run Entity Resolution Evaluation
+        run: |
+          .venv/bin/python -m eval.run_er_eval --resolver
+        env:
+          PYTHONPATH: .
+          
+      - name: Run SME Ontology Health Check (Cat 8)
+        run: |
+          .venv/bin/python -m sme.cli cat8 --adapter ladybugdb --db data/graph.lbug --implied-ontology examples/good-dog-corpus/ontology.yaml
+        env:
+          PYTHONPATH: .
+          
+      - name: Run SME Ontology Health Check (Cat 4+5)
+        run: |
+          .venv/bin/python -m sme.cli check --adapter ladybugdb --db data/graph.lbug --auto-discover
+        env:
+          PYTHONPATH: .
+          
+      - name: Check ER gate (F1 >= 0.80)
+        run: |
+          .venv/bin/python -c "
+import subprocess, json, sys
+result = subprocess.run(['.venv/bin/python', '-m', 'eval.run_er_eval', '--resolver'], capture_output=True, text=True)
+for line in result.stdout.split('\n'):
+    if 'F1:' in line:
+        f1 = float(line.split('F1:')[1].split()[0])
+        print(f'F1 = {f1}')
+        if f1 < 0.80:
+            print(f'FAIL: F1 {f1} < 0.80')
+            sys.exit(1)
+        else:
+            print(f'PASS: F1 {f1} >= 0.80')
+            sys.exit(0)
+"
