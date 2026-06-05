@@ -1,0 +1,29 @@
+# .pre-commit-config.yaml
+# Run with: pre-commit install && pre-commit run --all-files
+
+repos:
+  # Ruff: fast Python linter + formatter
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.0
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # Pyright type checking (optional, can be slow)
+  # - repo: https://github.com/microsoft/pyright
+  #   rev: v1.1.354
+  #   hooks:
+  #     - id: pyright
+
+  # Pytest: run fast unit tests (excludes slow/integration)
+  - repo: local
+    hooks:
+      - id: pytest-fast
+        name: pytest (fast)
+        entry: .venv/bin/pytest tests/ -q -x --ignore=tests/test_pipeline.py --tb=short
+        language: system
+        pass_filenames: false
+        always_run: true
+        # Skip if no venv or pytest not installed
+        exclude: ^$
