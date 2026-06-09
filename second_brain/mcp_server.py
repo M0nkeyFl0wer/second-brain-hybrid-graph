@@ -27,10 +27,12 @@ try:
 except ImportError:
     from fastmcp import FastMCP  # type: ignore[no-redef]
 
+from second_brain import config
 from second_brain.graph import Graph
 from second_brain.ontology import Ontology
 from second_brain.extract import Extractor
 from second_brain.embed import embed_text
+from second_brain.chunk_store import ChunkStore
 
 # Optional modules — graceful degradation if not available
 try:
@@ -65,6 +67,7 @@ import threading  # noqa: E402
 _graph: Graph | None = None
 _ontology: Ontology | None = None
 _extractor: Extractor | None = None
+_chunk_store: ChunkStore | None = None
 _init_lock = threading.Lock()
 
 
@@ -90,13 +93,87 @@ def _init() -> tuple[Graph, Ontology, Extractor]:
     return _graph, _ontology, _extractor  # type: ignore[return-value]
 
 
+def _get_chunk_store() -> ChunkStore | None:
+    """Return the lazy read-only chunk-store singleton, or None if no store exists.
+
+    The chunk store is the passage substrate for chunk-level hybrid retrieval.
+    It is opened read-only so it coexists with a concurrent ingest writer. The
+    in-memory HNSW is built on first vector query and cached for the process —
+    new chunks written by a later ingest are not seen until restart, matching
+    the staleness model of the cached _graph singleton.
+    """
+    global _chunk_store
+    if _chunk_store is not None:
+        return _chunk_store
+    if not config.CHUNK_STORE_PATH.exists():
+        return None
+    with _init_lock:
+        if _chunk_store is None:
+            _chunk_store = ChunkStore(
+                config.CHUNK_STORE_PATH,
+                read_only=True,
+                embedding_dim=config.EMBEDDING_DIM,
+            )
+    return _chunk_store
+
+
+def _entity_labels(graph: Graph, ids: list[str]) -> dict[str, tuple[str, str]]:
+    """Map entity ids -> (label, type) from the graph for pivot display."""
+    if not ids:
+        return {}
+    rows = graph.query(
+        "MATCH (e:Entity) WHERE e.id IN $ids "
+        "RETURN e.id AS id, e.label AS label, e.entity_type AS type",
+        parameters={"ids": ids},
+    )
+    return {r["id"]: (r.get("label") or r["id"], r.get("type") or "?") for r in rows}
+
+
+def passage_search(graph: Graph, store: ChunkStore, query: str, limit: int = 8) -> str:
+    """Chunk-level hybrid retrieval (BM25 + HNSW + RRF) with entity-pivot context.
+
+    Returns the source passages most relevant to the query, each annotated with
+    the canonical graph entities it grounds to — so the assistant gets both the
+    quotable text AND the entry points to expand in the graph. Pure helper
+    (takes graph + store explicitly) so it is testable without the MCP runtime.
+    """
+    try:
+        query_embedding = embed_text(query)
+    except Exception:
+        query_embedding = None  # BM25-only fallback if the embed backend is down
+
+    passages = store.search_hybrid(query, query_embedding=query_embedding, limit=limit)
+    if not passages:
+        return f'No passages found for "{query}".'
+
+    pivot_ids = sorted({eid for p in passages for eid in (p.get("entity_ids") or [])})
+    meta = _entity_labels(graph, pivot_ids)
+
+    parts = [f'Found {len(passages)} passages for "{query}":\n']
+    for i, p in enumerate(passages, 1):
+        title = p.get("title") or p.get("source_uri", "") or "—"
+        snippet = " ".join((p.get("body") or "").split())[:240]
+        parts.append(f"{i}. [{p.get('rrf_score', 0):.4f}] {title}")
+        parts.append(f"   {snippet}")
+        eids = p.get("entity_ids") or []
+        if eids:
+            labels = [f"{meta.get(e, (e, '?'))[0]} ({meta.get(e, (e, '?'))[1]})" for e in eids[:8]]
+            more = f" (+{len(eids) - 8})" if len(eids) > 8 else ""
+            parts.append(f"   ↳ grounds to: {'; '.join(labels)}{more}")
+        parts.append("")
+    return "\n".join(parts)
+
+
 def _shutdown():
-    """Clean up graph connection on process exit."""
-    global _graph
+    """Clean up connections on process exit."""
+    global _graph, _chunk_store
     if _graph is not None:
         _graph.close()
         _graph = None
         logger.info("Graph connection closed")
+    if _chunk_store is not None:
+        _chunk_store.close()
+        _chunk_store = None
 
 
 atexit.register(_shutdown)
@@ -290,16 +367,34 @@ def memory_search(query: str, mode: str = "hybrid", hops: int = 2) -> str:
               - "keyword": Full-text search on entity labels and descriptions.
               - "semantic": Vector similarity search using embeddings.
               - "hybrid": Both keyword and semantic, merged and deduplicated.
+              - "chunks": Passage-level retrieval over source documents (BM25 +
+                vector + RRF). Returns the actual text a RAG answer grounds in,
+                each annotated with the graph entities it mentions. Use this
+                when you need quotable evidence, not just entity names.
         hops: How many graph traversal steps to expand from each result.
               1 = direct neighbors only, 2 = neighbors of neighbors, etc.
-              Default is 2. Max is 4 (to avoid runaway expansion).
+              Default is 2. Max is 4 (to avoid runaway expansion). Ignored in
+              "chunks" mode.
 
     Returns:
         Formatted text listing matched entities, their types, and connections
-        discovered through graph expansion.
+        discovered through graph expansion (or passages with entity pivots in
+        "chunks" mode).
     """
     try:
         graph, ontology, extractor = _init()
+
+        # Passage retrieval runs against the DuckDB chunk store, not the graph
+        # traversal path below.
+        if mode == "chunks":
+            store = _get_chunk_store()
+            if store is None:
+                return (
+                    "No chunk store found — run an ingest "
+                    "(scripts/ingest_obsidian.py or ingest_folder.py) to enable "
+                    "passage retrieval."
+                )
+            return passage_search(graph, store, query)
 
         # Clamp hops to a safe range
         hops = max(1, min(hops, 4))
