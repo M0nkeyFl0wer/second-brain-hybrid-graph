@@ -6,10 +6,13 @@ Schedule: runs every 4 hours via systemd timer.
 Manual use:
     python scripts/enrich.py --vault /path/to/vault
 
-This script is deliberately graph-only for now. The older DuckDB-hybrid
-version used stale GraphWriter/ChunkStore APIs and different DB paths
-(brain.ldb / chunks.duckdb). Until the DuckDB substrate is wired into core
-ingest, this enrichment pass writes only to the current LadybugDB Graph API.
+This pass writes to BOTH substrates: the LadybugDB graph (typed entities/edges
++ entity embeddings) and the DuckDB chunk store (passages + chunk embeddings for
+hybrid retrieval). For each changed note it re-chunks, re-embeds, and re-links
+the note's passages — idempotent per document, so a note edit refreshes its
+chunks rather than duplicating them. Chunk sync is best-effort: if the chunk
+store is locked by another process (e.g. an MCP server holding a reader), the
+pass logs it and continues graph-only. Disable chunk sync with --no-chunks.
 """
 
 from __future__ import annotations
@@ -23,11 +26,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from second_brain import config
-from second_brain.embed import embed_text
+from second_brain.chunk_store import ChunkStore
+from second_brain.embed import embed_batch, embed_text
 from second_brain.extract import Extractor
 from second_brain.graph import Graph
 from second_brain.obsidian import scan_vault
 from second_brain.ontology_yaml import load_ontology
+from second_brain.pipeline.chunks import ingest_document_chunks, link_entities_to_chunks
 
 
 DATA_DIR = config.GRAPH_DIR.parent
@@ -85,6 +90,7 @@ def _add_obsidian_entities(note: dict, result: dict, ontology) -> None:
                 "description": f"Tag: #{tag}",
                 "confidence": 0.8,
                 "source_url": note["path"],
+                "doc_id": note["doc_id"],
                 "provenance": "obsidian_tag",
             }
         )
@@ -102,6 +108,7 @@ def _add_obsidian_entities(note: dict, result: dict, ontology) -> None:
                 "description": f"Linked note: [[{link_target}]]",
                 "confidence": 0.8,
                 "source_url": note["path"],
+                "doc_id": note["doc_id"],
                 "provenance": "obsidian_wikilink",
             }
         )
@@ -118,9 +125,18 @@ def _add_obsidian_entities(note: dict, result: dict, ontology) -> None:
 
 
 def enrich_note(
-    note: dict, graph: Graph, extractor: Extractor, ontology, embed: bool
+    note: dict,
+    graph: Graph,
+    extractor: Extractor,
+    ontology,
+    embed: bool,
+    chunk_store: ChunkStore | None = None,
 ) -> dict[str, int]:
-    """Extract entities/edges from one note and write through Graph API."""
+    """Extract entities/edges from one note and write through Graph API.
+
+    When ``chunk_store`` is provided, the note is also re-chunked, re-embedded,
+    and re-linked into the DuckDB chunk store (idempotent per doc).
+    """
     result = extractor.extract_from_text(
         note["body"], source_url=note["path"], doc_id=note["doc_id"]
     )
@@ -135,6 +151,8 @@ def enrich_note(
         "edges_written": 0,
         "embedding_failures": 0,
         "extract_failures": 1 if result.get("_error") else 0,
+        "chunks_written": 0,
+        "chunk_links": 0,
     }
 
     seen_entities = {}
@@ -178,6 +196,20 @@ def enrich_note(
         if written:
             stats["edges_written"] += 1
 
+    # Re-chunk + re-embed + re-link this note's passages (idempotent per doc).
+    if chunk_store is not None:
+        stats["chunks_written"] = ingest_document_chunks(
+            chunk_store,
+            doc_id=note["doc_id"],
+            source_uri=note["path"],
+            title=note["title"],
+            text=note["body"],
+            embed_batch_fn=embed_batch,
+        )
+        stats["chunk_links"] = link_entities_to_chunks(
+            chunk_store, list(seen_entities.values())
+        )
+
     return stats
 
 
@@ -198,6 +230,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--embed", action="store_true", help="Embed new/updated entities during enrichment"
+    )
+    parser.add_argument(
+        "--no-chunks",
+        action="store_true",
+        help="Skip DuckDB chunk-store re-chunk/re-embed (graph-only enrichment)",
     )
     args = parser.parse_args()
 
@@ -237,13 +274,27 @@ def main() -> int:
         "edges_written": 0,
         "embedding_failures": 0,
         "extract_failures": 0,
+        "chunks_written": 0,
+        "chunk_links": 0,
         "errors": 0,
     }
 
     graph = None
+    chunk_store = None
     try:
         if not args.dry_run:
             graph = Graph(graph_dir=Path(args.graph), ontology=ontology)
+            # Best-effort: a reader (e.g. a running MCP server) holding the
+            # chunk store can block this read-write open. Degrade to graph-only.
+            if not args.no_chunks:
+                try:
+                    chunk_store = ChunkStore(
+                        config.CHUNK_STORE_PATH, embedding_dim=config.EMBEDDING_DIM
+                    )
+                    chunk_store.init_schema()
+                except Exception as ex:
+                    log(f"Chunk store unavailable, enriching graph-only: {ex}")
+                    chunk_store = None
 
         for i, note in enumerate(notes, 1):
             try:
@@ -260,7 +311,9 @@ def main() -> int:
                         "extract_failures": 1 if result.get("_error") else 0,
                     }
                 else:
-                    stats = enrich_note(note, graph, extractor, ontology, args.embed)
+                    stats = enrich_note(
+                        note, graph, extractor, ontology, args.embed, chunk_store
+                    )
                 for key, value in stats.items():
                     totals[key] += value
                 log(
@@ -278,12 +331,15 @@ def main() -> int:
     finally:
         if graph is not None:
             graph.close()
+        if chunk_store is not None:
+            chunk_store.close()
 
     elapsed = (datetime.now(timezone.utc) - start).total_seconds()
     log(
         "=== Enrichment complete: "
         f"{totals['entities_written']}/{totals['entities_seen']} entities, "
         f"{totals['edges_written']}/{totals['edges_seen']} edges, "
+        f"{totals['chunks_written']} chunks ({totals['chunk_links']} entity links), "
         f"{totals['extract_failures']} extraction failures, "
         f"{totals['errors']} errors in {elapsed:.1f}s ==="
     )
