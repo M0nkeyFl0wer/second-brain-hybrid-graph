@@ -31,8 +31,9 @@ from second_brain import config
 from second_brain.graph import Graph
 from second_brain.ontology import Ontology
 from second_brain.extract import Extractor
-from second_brain.embed import embed_text
+from second_brain.embed import embed_text, embed_batch
 from second_brain.chunk_store import ChunkStore
+from second_brain.pipeline.chunks import ingest_document_chunks, link_entities_to_chunks
 
 # Optional modules — graceful degradation if not available
 try:
@@ -164,6 +165,64 @@ def passage_search(graph: Graph, store: ChunkStore, query: str, limit: int = 8) 
     return "\n".join(parts)
 
 
+def thought_doc_id(text: str) -> str:
+    """Deterministic doc id for an MCP-captured thought.
+
+    Content-derived so re-writing the same thought replaces its passages
+    (idempotent) rather than accumulating duplicates.
+    """
+    import hashlib
+
+    return "mcp_" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def store_thought_passages(
+    store: ChunkStore,
+    text: str,
+    doc_id: str,
+    entities: list[dict],
+    *,
+    embed_batch_fn=embed_batch,
+) -> int:
+    """Chunk a thought into the store and link it to its entities.
+
+    Pure helper (explicit store) so it is testable without the singleton/MCP
+    machinery. Returns the number of (chunk, entity) links written.
+    """
+    ingest_document_chunks(
+        store,
+        doc_id=doc_id,
+        source_uri=f"mcp://thought/{doc_id}",
+        title=None,
+        text=text,
+        embed_batch_fn=embed_batch_fn,
+    )
+    return link_entities_to_chunks(store, entities)
+
+
+def _persist_thought_passages(text: str, doc_id: str, entities: list[dict]) -> int:
+    """Write a thought's passages via a short-lived read-write chunk store.
+
+    DuckDB allows only one connection configuration per file per process, so the
+    cached read-only singleton must be released before a read-write open. We
+    close it under the init lock, write, and leave it closed (the next chunks
+    search reopens it). Best-effort: a cross-process ingest holding the write
+    lock raises here and the caller skips chunk persistence — the thought's
+    entities are already safe in the graph regardless.
+    """
+    global _chunk_store
+    with _init_lock:
+        if _chunk_store is not None:
+            _chunk_store.close()
+            _chunk_store = None
+        store = ChunkStore(config.CHUNK_STORE_PATH, embedding_dim=config.EMBEDDING_DIM)
+        store.init_schema()
+        try:
+            return store_thought_passages(store, text, doc_id, entities)
+        finally:
+            store.close()
+
+
 def _shutdown():
     """Clean up connections on process exit."""
     global _graph, _chunk_store
@@ -210,7 +269,11 @@ def memory_write(thought: str, tags: list[str] | None = None) -> str:
             full_text = f"{tag_line}\n\n{thought}"
 
         # ----- Phase 1: Extract entities and edges -----
-        result = extractor.extract_from_text(full_text, source_url="mcp_input")
+        # Derive a stable doc_id up front and thread it through extraction so
+        # the entities carry it — link_entities_to_chunks needs it to attach
+        # entities to this thought's passages.
+        doc_id = thought_doc_id(full_text)
+        result = extractor.extract_from_text(full_text, source_url="mcp_input", doc_id=doc_id)
         entities = result.get("entities", [])
         edges = result.get("edges", [])
 
@@ -240,6 +303,16 @@ def memory_write(thought: str, tags: list[str] | None = None) -> str:
             except Exception as e:
                 logger.warning("Failed to embed entity %s: %s", entity["id"], e)
 
+        # ----- Phase 4b: Persist the thought as retrievable passages -----
+        # So the thought is findable via memory_search(mode="chunks"), with its
+        # entities already linked. Best-effort: a concurrent ingest holding the
+        # chunk-store write lock skips this; the entities above are unaffected.
+        chunk_links = 0
+        try:
+            chunk_links = _persist_thought_passages(full_text, doc_id, entities)
+        except Exception as e:
+            logger.warning("Chunk persistence skipped for thought %s: %s", doc_id, e)
+
         # ----- Phase 5: Discover hidden connections for new entities -----
         # This is the "aha moment" feature — find ideas in the existing graph
         # that are semantically close to the new entities but not yet linked.
@@ -264,6 +337,11 @@ def memory_write(thought: str, tags: list[str] | None = None) -> str:
             f"Stored {stored_count} entities, {edge_count} edges.",
             f"Entities: {', '.join(entity_labels[:10])}",
         ]
+        if chunk_links:
+            parts.append(
+                f"Indexed as passages (searchable via memory_search mode='chunks'), "
+                f"{chunk_links} entity links."
+            )
 
         if hidden_links:
             parts.append("Hidden connections discovered:")

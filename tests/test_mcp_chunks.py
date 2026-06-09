@@ -58,6 +58,38 @@ def test_passage_search_handles_no_results(tmp_path, graph, mock_ollama):
         store.close()
 
 
+def test_thought_doc_id_is_deterministic():
+    a = mcp_server.thought_doc_id("a captured thought")
+    b = mcp_server.thought_doc_id("a captured thought")
+    c = mcp_server.thought_doc_id("a different thought")
+    assert a == b and a != c
+    assert a.startswith("mcp_")
+
+
+def test_store_thought_passages_round_trips(tmp_path, mock_ollama):
+    store = ChunkStore(tmp_path / "chunks.duckdb", embedding_dim=768)
+    store.init_schema()
+    try:
+        text = "Reciprocal rank fusion merges keyword and vector rankings robustly."
+        doc_id = mcp_server.thought_doc_id(text)
+        # Entities carry the thought's doc_id (as memory_write threads it through).
+        entities = [
+            {"id": "rrf", "label": "rank fusion", "doc_ids": [doc_id]},
+        ]
+        links = mcp_server.store_thought_passages(store, text, doc_id, entities)
+        assert links == 1
+
+        hits = store.search_hybrid("rank fusion", query_embedding=None, limit=1)
+        assert hits and "rrf" in hits[0]["entity_ids"]
+
+        # Re-storing the same thought replaces rather than duplicates (idempotent).
+        before = store.get_stats()["total_chunks"]
+        mcp_server.store_thought_passages(store, text, doc_id, entities)
+        assert store.get_stats()["total_chunks"] == before
+    finally:
+        store.close()
+
+
 def test_get_chunk_store_none_when_absent(tmp_path, monkeypatch):
     monkeypatch.setattr(
         mcp_server.config, "CHUNK_STORE_PATH", tmp_path / "does-not-exist.duckdb"
