@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Dry-run junk-entity pruning audit.
 
-This tool never mutates the graph. LadybugDB bulk deletes are unsafe on this
-stack; actual pruning must happen by reconstructing a filtered graph copy and
-swapping it in after verification.
+This tool never mutates the graph. Pruning happens by reconstructing a filtered
+graph copy and swapping it in after verification — a deliberately conservative
+path for irreversible bulk mutation. (In-place bulk DELETE was unsafe on the
+older `real_ladybug` build this stack started on; it tests clean on the current
+ladybug 0.17.1 — see `scripts/repro_bulk_delete.py` — but reconstruct-and-swap
+stays the default because a verified-then-swapped copy is recoverable and an
+in-place delete is not.)
 """
 
 from __future__ import annotations
@@ -351,14 +355,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--apply",
         action="store_true",
-        help="Refused: use reconstruct-filtered rebuild, not in-place pruning.",
+        help="Refused by default: use reconstruct-filtered rebuild, not in-place pruning.",
     )
     args = parser.parse_args(argv)
 
     if args.apply:
         print(
-            "--apply is intentionally unsupported. LadybugDB bulk DELETE is unsafe; "
-            "pruning must use reconstruct-filtered rebuild + swap.",
+            "--apply is intentionally unsupported. Pruning uses reconstruct-filtered "
+            "rebuild + swap so the pre-prune graph stays recoverable.",
             file=sys.stderr,
         )
         return 2

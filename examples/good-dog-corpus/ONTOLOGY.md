@@ -142,6 +142,39 @@ Extensions should be opened as issues against the SME repo with `[good-dog-corpu
 
 ---
 
+## 8. Precision vs. recall: the domain/range tradeoff (why the built graph is sparse)
+
+Every edge type in §3 carries a tight `direction:` (domain → range). That tightness is deliberate — it is what makes the phantom-edge probe (§4) meaningful: an edge whose endpoints violate its declared domain/range is rejected at write time as a grade-locality violation, before it can pollute the graph. The schema is **precision-first**.
+
+The cost of that choice is **recall**, and it is large enough to be worth stating plainly. Building the type-pair reachability matrix from `ontology.yaml` (which ordered `(source_type, target_type)` pairs does *any* edge type admit?) shows:
+
+- **44 of the 64 type-pairs are inexpressible** — no edge type connects them in that direction.
+- **`concept` is a near-sink.** The only edge type with `concept` as its *source* is `alias_of` — and that is `same_type: true` and registry-proposed, not freely LLM-extracted. A concept can be pointed *at* (by `publication` via `mentions`/`subject_of`, by `organization` via `regulates`) but can essentially **never originate a relation.**
+- **`event` is nearly the same** — its only outgoing edge type is `located_in` (event → location).
+
+In the demo corpus, `concept` (≈37% of entities) and `event` (≈20%) together are **~57% of all nodes** — and the majority of them structurally *cannot start an edge*. An LLM reading dog-science prose naturally proposes concept-centric relations ("dominance theory → superseded by → positive reinforcement", "BSL → targets → pit bulls"). Almost all of those are `concept → concept` or `concept → X`, have no valid edge type, and are correctly grade-dropped.
+
+The attrition this produces is measured and consistent across extraction backends:
+
+| Extraction backend | Edges proposed | Edges persisted | Dropped |
+|---|---|---|---|
+| qwen3:14b (remote-gpu-host) | 547 | 143 | ~74% |
+| gemma3:12b (remote-gpu-host) | 304 | 59 | ~81% |
+
+**This is the ontology working as designed, not a bug.** The sparse, high-confidence graph is the deliberate output of a precision-first schema built to test phantom-edge detection. It sits at the opposite end of the spectrum from the repo's *built-in default* ontology (root `ONTOLOGY.md`), which keeps permissive `*`-direction associative edges (`ASSOCIATED_WITH`, `SUPPORTS`, `CONFLICTS_WITH`) and so yields a denser, lower-precision graph.
+
+**If you want density from this corpus** — e.g. for a graph-traversal demo rather than a phantom-edge eval — give conceptual relations a home by adding one associative edge type:
+
+```yaml
+  - id: related_to
+    direction: "concept -> concept"   # or "* -> *" for maximal recall
+    description: "Associative link between concepts (SKOS related); recall over precision"
+```
+
+That single addition recovers most of the dropped edges. The tradeoff it makes is explicit: it reopens the recall the strict schema closed, at the cost of weakening the phantom-edge contract (an associative `* -> *` edge can no longer be grade-checked). Bump the `version` field if you take it — it is a different point on the precision/recall curve, not a bugfix.
+
+---
+
 ## Status
 
 v0.2, 2026-06-04. Drafted v0.1 2026-04-30. Subject to revision as the corpus content fills in and edge cases surface. Major revisions are reflected in `ontology.yaml`'s `version` field and the changelog below.

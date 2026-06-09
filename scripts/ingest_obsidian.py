@@ -84,6 +84,17 @@ def main():
         )
     else:
         print("Ontology: built-in SecondBrainOntology (default)")
+    # --force means "rebuild from scratch", so reset the on-disk graph first.
+    # Without this, bulk_add_entities COPYs onto a populated store and the first
+    # id that already exists trips a primary-key collision. (Batch-level dedup
+    # in bulk_add_entities only collapses duplicates *within* one load, not
+    # against rows already persisted.)
+    if args.force and config.GRAPH_DIR.exists():
+        config.GRAPH_DIR.unlink()
+        wal = config.GRAPH_DIR.parent / (config.GRAPH_DIR.name + ".wal")
+        if wal.exists():
+            wal.unlink()
+        print(f"--force: reset graph store at {config.GRAPH_DIR}")
     graph = Graph(ontology=ontology)
     chunk_store = ChunkStore(config.CHUNK_STORE_PATH, embedding_dim=config.EMBEDDING_DIM)
     chunk_store.init_schema()

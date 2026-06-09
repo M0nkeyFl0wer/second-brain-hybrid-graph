@@ -42,8 +42,10 @@ analysis). No server to run, no cloud, no API keys required.
 - **Additions** — ingest a vault, a folder, or nothing; new content flows in.
 - **Pathfinding** — find how two ideas connect across the graph, not just whether
   they're similar.
-- **Pruning** — clean a live graph safely (the hard part: bulk deletes corrupt
-  LadybugDB's rel store — see [docs/STORAGE.md](docs/STORAGE.md)).
+- **Pruning** — clean a live graph by *reconstruct-and-swap*: build a filtered
+  copy, verify it on disk, then swap it in behind a backup
+  (`scripts/apply_resolution.py`, `scripts/prune_junk_entities.py`). A
+  deliberately conservative default for irreversible bulk mutation.
 - **Enrichment** — scheduled passes that re-read recent notes and grow the graph.
 
 ---
@@ -139,6 +141,13 @@ edge_types:
 A tailored ontology drives extraction (the LLM is told your types) and validates
 every edge against domain/range. See [ONTOLOGY.md](ONTOLOGY.md) and the worked
 example in [`examples/good-dog-corpus/`](examples/good-dog-corpus/).
+
+That domain/range validation is a **precision/recall dial**. The strict
+good-dog ontology rejects ~75–80% of LLM-proposed edges (the ones whose
+endpoints violate a declared type) — a deliberately sparse, high-confidence
+graph, not a broken one. The built-in default sits looser. The tradeoff, the
+measured attrition, and how to dial toward density are written up in
+[`examples/good-dog-corpus/ONTOLOGY.md` §8](examples/good-dog-corpus/ONTOLOGY.md#8-precision-vs-recall-the-domainrange-tradeoff-why-the-built-graph-is-sparse).
 
 ---
 

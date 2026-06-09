@@ -1,10 +1,13 @@
 """Apply entity resolution to the live graph via RECONSTRUCT-FILTERED.
 
 Phase D of entity resolution. The resolver (`scripts/resolve_entities.py`) only
-proposes a clustering; this applies it. In-place node/edge DELETE corrupts this
-LadybugDB build (see the `ladybug-surgery` skill), so we never mutate in place:
-we build a NEW graph that already has the merges baked in (all CREATE, zero
-DELETE), verify it on disk, and only then swap it in behind a backup.
+proposes a clustering; this applies it. We never mutate in place: we build a NEW
+graph that already has the merges baked in (all CREATE, zero DELETE), verify it
+on disk, and only then swap it in behind a backup. In-place node/edge DELETE was
+unsafe on the older `real_ladybug` build this stack started on; it tests clean on
+ladybug 0.17.1 (see `scripts/repro_bulk_delete.py`), but reconstruct-and-swap
+stays the default because the pre-merge graph remains recoverable — a merge you
+got wrong is one `mv` away from undo.
 
 Flow:
   1. Read every entity (with embedding) and RELATES_TO edge from the source.
