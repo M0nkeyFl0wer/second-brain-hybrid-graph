@@ -17,7 +17,7 @@ from second_brain.embed import embed_text, embed_batch
 from second_brain.ontology import slugify
 from second_brain.obsidian import scan_vault
 from second_brain.chunk_store import ChunkStore
-from second_brain.pipeline.chunks import ingest_document_chunks
+from second_brain.pipeline.chunks import ingest_document_chunks, link_entities_to_chunks
 from second_brain.pipeline.resolve import canonicalize_extracted_graph
 from second_brain import config
 
@@ -238,6 +238,12 @@ def main():
                     graph.set_embedding(entity["id"], emb)
                 except Exception as e:
                     print(f"  Embedding failed for {entity['label']}: {e}")
+
+            # Cross-link chunks ↔ entities: attach canonical entity IDs to the
+            # chunks that mention them, so a passage hit can pivot into the graph.
+            links = link_entities_to_chunks(chunk_store, all_entities)
+            if links:
+                print(f"  Chunk↔entity links: {links}")
 
         if all_edges:
             print(f"Loading {len(all_edges)} edges...")

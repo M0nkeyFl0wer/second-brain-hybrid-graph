@@ -358,14 +358,7 @@ class ChunkStore:
                 return []
             rows = self._fetch_chunks_by_ids(ro, ids)
             return [
-                {
-                    "id": r[0],
-                    "body": r[1],
-                    "title": r[2],
-                    "source_uri": r[3],
-                    "doc_id": r[4],
-                    "rrf_score": 1.0 / (60 + rank),
-                }
+                self._chunk_row_to_dict(r, 1.0 / (60 + rank))
                 for rank, r in enumerate(rows, 1)
             ]
 
@@ -408,26 +401,16 @@ class ChunkStore:
         rows = self._fetch_chunks_by_ids(ro, top_ids)
 
         score_map = dict(rrf_scores)
-        return [
-            {
-                "id": r[0],
-                "body": r[1],
-                "title": r[2],
-                "source_uri": r[3],
-                "doc_id": r[4],
-                "rrf_score": score_map[r[0]],
-            }
-            for r in rows
-        ]
+        return [self._chunk_row_to_dict(r, score_map[r[0]]) for r in rows]
 
     @staticmethod
     def _fetch_chunks_by_ids(
         conn: duckdb.DuckDBPyConnection, ids: list[str]
-    ) -> list[tuple[str, str, str, str, str]]:
+    ) -> list[tuple[str, str, str, str, str, str]]:
         placeholders = ", ".join("?" for _ in ids)
         rows = conn.execute(
             f"""
-            SELECT id, body, title, source_uri, doc_id
+            SELECT id, body, title, source_uri, doc_id, entity_ids
             FROM chunk
             WHERE id IN ({placeholders})
             """,
@@ -435,6 +418,57 @@ class ChunkStore:
         ).fetchall()
         row_by_id = {row[0]: row for row in rows}
         return [row_by_id[id_] for id_ in ids if id_ in row_by_id]
+
+    @staticmethod
+    def _chunk_row_to_dict(r: tuple, rrf_score: float) -> dict[str, Any]:
+        """Shape a _fetch_chunks_by_ids row into a search result dict."""
+        return {
+            "id": r[0],
+            "body": r[1],
+            "title": r[2],
+            "source_uri": r[3],
+            "doc_id": r[4],
+            "entity_ids": json.loads(r[5]) if r[5] else [],
+            "rrf_score": rrf_score,
+        }
+
+    def fetch_chunks_for_docs(self, doc_ids: list[str]) -> list[dict[str, Any]]:
+        """Return [{id, doc_id, body}] for the given documents (read-only).
+
+        Used by entity↔chunk linking to find which chunks a document's entities
+        could be mentioned in. Uses a short-lived read handle.
+        """
+        if not doc_ids:
+            return []
+        conn = duckdb.connect(str(self.db_path), read_only=True)
+        try:
+            placeholders = ", ".join("?" for _ in doc_ids)
+            rows = conn.execute(
+                f"SELECT id, doc_id, body FROM chunk WHERE doc_id IN ({placeholders})",
+                list(doc_ids),
+            ).fetchall()
+            return [{"id": r[0], "doc_id": r[1], "body": r[2]} for r in rows]
+        finally:
+            conn.close()
+
+    def set_entity_ids(self, links: dict[str, list[str]]) -> int:
+        """Overwrite the entity_ids of the given chunks. Maps chunk_id -> ids.
+
+        Safe as a plain UPDATE: entity_ids is not the HNSW-indexed column (the
+        disk table carries no persistent HNSW — it is rebuilt in memory), so the
+        DELETE+INSERT re-embed dance does not apply here. Returns chunks touched.
+        """
+        if not links:
+            return 0
+        rw = self._open_rw()
+        try:
+            rw.executemany(
+                "UPDATE chunk SET entity_ids = ? WHERE id = ?",
+                [[json.dumps(sorted(set(ids))), chunk_id] for chunk_id, ids in links.items()],
+            )
+            return len(links)
+        finally:
+            rw.close()
 
     def get_chunk_by_id(self, chunk_id: str) -> Optional[dict[str, Any]]:
         """Get a single chunk by ID."""

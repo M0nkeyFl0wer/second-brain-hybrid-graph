@@ -112,6 +112,11 @@ def display_chunks(results):
         snippet = " ".join(r.get("body", "").split())[:160]
         print(f"  [{score:.4f}] {title}")
         print(f"            {snippet}")
+        entity_ids = r.get("entity_ids") or []
+        if entity_ids:
+            shown = ", ".join(entity_ids[:6])
+            more = f" (+{len(entity_ids) - 6})" if len(entity_ids) > 6 else ""
+            print(f"            ↳ entities: {shown}{more}")
 
 
 def display_results(results, mode):

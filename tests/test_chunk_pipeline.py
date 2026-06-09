@@ -3,7 +3,11 @@
 import pytest
 
 from second_brain.chunk_store import ChunkStore
-from second_brain.pipeline.chunks import chunk_document, ingest_document_chunks
+from second_brain.pipeline.chunks import (
+    chunk_document,
+    ingest_document_chunks,
+    link_entities_to_chunks,
+)
 
 
 def _fake_embed(dim=4):
@@ -88,6 +92,59 @@ def test_ingest_falls_back_to_bm25_when_embedding_fails(tmp_path):
         # BM25-only retrieval still works.
         hits = store.search_hybrid("rank fusion", query_embedding=None, limit=1)
         assert hits and "fusion" in hits[0]["body"]
+    finally:
+        store.close()
+
+
+def test_link_entities_to_chunks(tmp_path):
+    store = ChunkStore(tmp_path / "chunks.duckdb", embedding_dim=4)
+    store.init_schema()
+    try:
+        ingest_document_chunks(
+            store, doc_id="d1", source_uri="collie.md", title="Collie",
+            text="The Border Collie is an intelligent herding breed from the AKC registry.",
+            embed_batch_fn=_fake_embed(),
+        )
+        entities = [
+            # matches by canonical label
+            {"id": "border_collie", "label": "Border Collie", "doc_ids": ["d1"]},
+            # matches by alias, not canonical label
+            {"id": "akc", "label": "American Kennel Club", "aliases": ["AKC"], "doc_ids": ["d1"]},
+            # belongs to d1 but is not mentioned in the text -> no link
+            {"id": "poodle", "label": "Poodle", "doc_ids": ["d1"]},
+            # mentioned text but wrong doc -> no link
+            {"id": "herding", "label": "herding", "doc_ids": ["d2"]},
+        ]
+        n_links = link_entities_to_chunks(store, entities)
+        assert n_links == 2
+
+        # Inspect the single chunk's attached entities.
+        chunk_id = store.fetch_chunks_for_docs(["d1"])[0]["id"]
+        linked = set(store.get_chunk_by_id(chunk_id)["entity_ids"])
+        assert linked == {"border_collie", "akc"}
+
+        # Linked ids also surface through hybrid search results.
+        hit = store.search_hybrid("herding breed", query_embedding=None, limit=1)[0]
+        assert set(hit["entity_ids"]) == {"border_collie", "akc"}
+    finally:
+        store.close()
+
+
+def test_link_avoids_substring_false_positives(tmp_path):
+    store = ChunkStore(tmp_path / "chunks.duckdb", embedding_dim=4)
+    store.init_schema()
+    try:
+        ingest_document_chunks(
+            store, doc_id="d1", source_uri="weather.md", title="Weather",
+            text="Heavy rain fell on the category five storm.",
+            embed_batch_fn=_fake_embed(),
+        )
+        # "AI" must NOT match inside "rain"; "cat" must NOT match inside "category".
+        entities = [
+            {"id": "ai", "label": "AI", "doc_ids": ["d1"]},
+            {"id": "cat", "label": "cat", "doc_ids": ["d1"]},
+        ]
+        assert link_entities_to_chunks(store, entities) == 0
     finally:
         store.close()
 
