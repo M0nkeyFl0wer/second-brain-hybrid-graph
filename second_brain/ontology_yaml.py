@@ -24,6 +24,7 @@ types (i.e. unconstrained on that side). Edges with "* -> *" impose no
 grade_locality constraint (omitted from EDGE_DOMAIN_RANGE so validate_grade
 passes by default).
 """
+
 from __future__ import annotations
 
 from itertools import product
@@ -73,8 +74,11 @@ class YamlOntology(Ontology):
             if left == "*" and right == "*":
                 continue  # no constraint
             # keep only pairs over declared entity types
-            pairs = [(s, t) for s, t in product(srcs, tgts)
-                     if s in self.NODE_TYPES and t in self.NODE_TYPES]
+            pairs = [
+                (s, t)
+                for s, t in product(srcs, tgts)
+                if s in self.NODE_TYPES and t in self.NODE_TYPES
+            ]
             if pairs:
                 dr[eid] = pairs
         self.EDGE_DOMAIN_RANGE = dr
@@ -100,4 +104,5 @@ def load_ontology(path: str | Path | None = None):
     if path:
         return YamlOntology(path)
     from second_brain.ontology import Ontology as DefaultOntology
+
     return DefaultOntology()

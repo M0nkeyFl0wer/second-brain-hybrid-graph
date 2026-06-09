@@ -14,12 +14,14 @@ def run():
 
     try:
         import pyarrow
+
         checks.append(f"  PyArrow: {pyarrow.__version__}")
     except ImportError:
         checks.append("  PyArrow: NOT INSTALLED (pip install pyarrow)")
 
     try:
         import spacy
+
         checks.append(f"  spaCy: {spacy.__version__}")
         try:
             spacy.load("en_core_web_sm")
@@ -31,18 +33,21 @@ def run():
 
     try:
         import networkx
+
         checks.append(f"  NetworkX: {networkx.__version__}")
     except ImportError:
         checks.append("  NetworkX: NOT INSTALLED (pip install networkx)")
 
     try:
         import ripser  # noqa: F401 — presence check only
+
         checks.append("  Ripser: OK")
     except ImportError:
         checks.append("  Ripser: not installed (optional, pip install ripser)")
 
     try:
         import ollama
+
         models = ollama.list()
         model_names = [m.model for m in models.models] if hasattr(models, "models") else []
         checks.append(f"  Ollama: OK ({len(model_names)} models)")
@@ -60,6 +65,7 @@ def run():
     print()
 
     from .ontology import Ontology
+
     try:
         ont = Ontology()
         print(f"Ontology: {ont}")

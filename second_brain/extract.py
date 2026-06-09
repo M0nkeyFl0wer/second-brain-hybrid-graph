@@ -33,13 +33,23 @@ TIMEOUT_SECONDS = int(os.environ.get("SECOND_BRAIN_EXTRACT_TIMEOUT", "120"))
 
 
 DEFAULT_NODE_TYPES = [
-    "concept", "person", "source", "project", "insight",
-    "question", "practice", "place", "method", "tool",
+    "concept",
+    "person",
+    "source",
+    "project",
+    "insight",
+    "question",
+    "practice",
+    "place",
+    "method",
+    "tool",
 ]
 
 
 def _build_extraction_prompt(
-    text: str, edge_types: list[str], node_types: list[str],
+    text: str,
+    edge_types: list[str],
+    node_types: list[str],
 ) -> str:
     """The triplet-extraction prompt, shared by the local (Ollama) and remote
     (OpenAI-compatible) backends so both ask for exactly the same thing."""
@@ -214,8 +224,7 @@ def extract_triplets_openai(
     except Exception as ex:
         # Same fail-loud contract as the local path: surface the error so the
         # ingest refuses to declare success on a degraded/unauthorized backend.
-        logger.warning("extract_triplets_openai failed (model=%s, base=%s): %s",
-                       model, base, ex)
+        logger.warning("extract_triplets_openai failed (model=%s, base=%s): %s", model, base, ex)
         return {"entities": [], "edges": [], "_error": str(ex)}
 
 
@@ -228,6 +237,7 @@ def instructor_available() -> bool:
     try:
         import instructor  # noqa: F401
         import openai  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -292,7 +302,9 @@ def extract_triplets_instructor(
     except Exception as ex:
         logger.warning(
             "extract_triplets_instructor failed (model=%s, base=%s): %s",
-            model, base_url, ex,
+            model,
+            base_url,
+            ex,
         )
         return {"entities": [], "edges": [], "_error": str(ex)}
 
@@ -335,7 +347,7 @@ def _parse_json_response(response_text: str) -> dict[str, Any]:
     last_brace = cleaned.rfind("}")
     if first_brace != -1 and last_brace > first_brace:
         try:
-            return json.loads(cleaned[first_brace:last_brace + 1])
+            return json.loads(cleaned[first_brace : last_brace + 1])
         except json.JSONDecodeError:
             pass
 
@@ -379,6 +391,7 @@ def extract_triplets_batch(
 def generate_entity_id(label: str) -> str:
     """Stable entity id from a label (slug-based, matches ontology.slugify)."""
     from second_brain.ontology import slugify
+
     return slugify(label)
 
 
@@ -417,15 +430,23 @@ class Extractor:
             # Local Ollama. Default to LOCAL_EXTRACTION_MODEL (llama3.2:3b — fast),
             # NOT extract.py's DEFAULT_MODEL (qwen3:14b, which crawls). Caller can override.
             self.backend = "ollama"
-            self.model = (model or os.environ.get("SECOND_BRAIN_LOCAL_MODEL")
-                          or _cfg("LOCAL_EXTRACTION_MODEL", DEFAULT_MODEL) or DEFAULT_MODEL)
+            self.model = (
+                model
+                or os.environ.get("SECOND_BRAIN_LOCAL_MODEL")
+                or _cfg("LOCAL_EXTRACTION_MODEL", DEFAULT_MODEL)
+                or DEFAULT_MODEL
+            )
             # SECOND_BRAIN_EXTRACT_HOST lets extraction target a different
             # Ollama than embeddings (which use the ollama client's OLLAMA_HOST).
             # This decouples a big extraction model on a GPU box from a light
             # embedding model elsewhere, avoiding single-GPU VRAM contention.
-            self.host = (host or os.environ.get("SECOND_BRAIN_EXTRACT_HOST")
-                         or os.environ.get("OLLAMA_HOST")
-                         or _cfg("OLLAMA_HOST", DEFAULT_HOST) or DEFAULT_HOST)
+            self.host = (
+                host
+                or os.environ.get("SECOND_BRAIN_EXTRACT_HOST")
+                or os.environ.get("OLLAMA_HOST")
+                or _cfg("OLLAMA_HOST", DEFAULT_HOST)
+                or DEFAULT_HOST
+            )
 
         # Type vocabulary to constrain the LLM — pulled from the ontology so a
         # custom ontology actually drives extraction (entity types AND edges).
@@ -437,8 +458,7 @@ class Extractor:
         # instructor/openai SDK. Enable with SECOND_BRAIN_USE_INSTRUCTOR=1 (or
         # config.USE_INSTRUCTOR) AND `pip install 'open-second-brain[instructor]'`.
         want_instructor = str(
-            os.environ.get("SECOND_BRAIN_USE_INSTRUCTOR")
-            or _cfg("USE_INSTRUCTOR", "")
+            os.environ.get("SECOND_BRAIN_USE_INSTRUCTOR") or _cfg("USE_INSTRUCTOR", "")
         ).strip().lower() in ("1", "true", "yes", "on")
         self.use_instructor = want_instructor and instructor_available()
         if want_instructor and not self.use_instructor:
@@ -457,7 +477,10 @@ class Extractor:
             self._instructor_key = "ollama"
 
     def extract_from_text(
-        self, text: str, source_url: str = "", doc_id: str | None = None,
+        self,
+        text: str,
+        source_url: str = "",
+        doc_id: str | None = None,
     ) -> dict[str, Any]:
         """Extract entities + edges from text, id-resolved and enriched.
 
@@ -470,19 +493,28 @@ class Extractor:
         """
         if self.use_instructor:
             raw = extract_triplets_instructor(
-                text, self.node_types, self.edge_types,
-                model=self.model, base_url=self._instructor_base,
+                text,
+                self.node_types,
+                self.edge_types,
+                model=self.model,
+                base_url=self._instructor_base,
                 api_key=self._instructor_key,
             )
         elif self.backend == "openai":
             raw = extract_triplets_openai(
-                text, self.edge_types, model=self.remote_model,
-                api_base=self.remote_base, api_key=self.api_key,
+                text,
+                self.edge_types,
+                model=self.remote_model,
+                api_base=self.remote_base,
+                api_key=self.api_key,
                 node_types=self.node_types or None,
             )
         else:
             raw = extract_triplets_from_text(
-                text, self.edge_types, model=self.model, host=self.host,
+                text,
+                self.edge_types,
+                model=self.model,
+                host=self.host,
                 node_types=self.node_types or None,
             )
 
@@ -509,36 +541,43 @@ class Extractor:
                 continue
             eid = generate_entity_id(label)
             label_to_id[label] = eid
-            entities.append({
-                "id": eid,
-                "entity_type": _canon_node(ent.get("type")),
-                "label": label,
-                "description": (ent.get("meta") or {}).get("description", ""),
-                "confidence": float(ent.get("confidence", 0.5)),
-                "source_url": source_url,
-                "provenance": "llm_extraction",
-            })
+            entities.append(
+                {
+                    "id": eid,
+                    "entity_type": _canon_node(ent.get("type")),
+                    "label": label,
+                    "description": (ent.get("meta") or {}).get("description", ""),
+                    "confidence": float(ent.get("confidence", 0.5)),
+                    "source_url": source_url,
+                    "doc_id": doc_id or "",
+                    "provenance": "llm_extraction",
+                }
+            )
 
         edges: list[dict[str, Any]] = []
         for edge in raw.get("edges", []):
             src_label = (edge.get("source") or "").strip()
             tgt_label = (edge.get("target") or "").strip()
             src_id = label_to_id.get(src_label) or (
-                generate_entity_id(src_label) if src_label else None)
+                generate_entity_id(src_label) if src_label else None
+            )
             tgt_id = label_to_id.get(tgt_label) or (
-                generate_entity_id(tgt_label) if tgt_label else None)
+                generate_entity_id(tgt_label) if tgt_label else None
+            )
             if not src_id or not tgt_id:
                 continue
-            edges.append({
-                "source_id": src_id,
-                "target_id": tgt_id,
-                "edge_type": _canon_edge(edge.get("type")),
-                "evidence": edge.get("evidence", ""),
-                "confidence": float(edge.get("confidence", 0.5)),
-                "source_url": source_url,
-            })
+            edges.append(
+                {
+                    "source_id": src_id,
+                    "target_id": tgt_id,
+                    "edge_type": _canon_edge(edge.get("type")),
+                    "evidence": edge.get("evidence", ""),
+                    "confidence": float(edge.get("confidence", 0.5)),
+                    "source_url": source_url,
+                }
+            )
 
         out = {"entities": entities, "edges": edges}
         if raw.get("_error"):
-            out["_error"] = raw["_error"]   # propagate backend failure to caller
+            out["_error"] = raw["_error"]  # propagate backend failure to caller
         return out

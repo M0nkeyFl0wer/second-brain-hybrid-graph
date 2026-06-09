@@ -8,6 +8,7 @@ Tests cover:
   - Extraction prompt generation
   - Boundary examples (exotypical column)
 """
+
 import pytest
 
 # This file targets the PRE-REFACTOR ontology API: a class that parsed
@@ -21,10 +22,11 @@ import pytest
 # ontology-introspection API is reintroduced.
 pytestmark = pytest.mark.skip(
     reason="Targets the removed markdown-parsing ontology API "
-           "(entity_types/edge_types objects, get_rejection_counts, "
-           "get_extraction_prompt_context, case-insensitive validate). "
-           "Current ontology is frozenset-based; behaviour covered by "
-           "test_kg_common_parity.py.")
+    "(entity_types/edge_types objects, get_rejection_counts, "
+    "get_extraction_prompt_context, case-insensitive validate). "
+    "Current ontology is frozenset-based; behaviour covered by "
+    "test_kg_common_parity.py."
+)
 
 
 class TestOntologyParsing:
@@ -34,16 +36,28 @@ class TestOntologyParsing:
         """ONTOLOGY.md declares 8 entity types: concept, person, source,
         project, insight, question, practice, place."""
         expected = {
-            "concept", "person", "source", "project",
-            "insight", "question", "practice", "place",
+            "concept",
+            "person",
+            "source",
+            "project",
+            "insight",
+            "question",
+            "practice",
+            "place",
         }
         assert set(ontology.entity_type_names) == expected
 
     def test_parse_edge_types(self, ontology):
         """ONTOLOGY.md declares 9 edge types."""
         expected = {
-            "LEARNED_FROM", "INSPIRED_BY", "CONFLICTS_WITH", "SUPPORTS",
-            "PART_OF", "PRACTICED_IN", "ASKED_ABOUT", "ANSWERS",
+            "LEARNED_FROM",
+            "INSPIRED_BY",
+            "CONFLICTS_WITH",
+            "SUPPORTS",
+            "PART_OF",
+            "PRACTICED_IN",
+            "ASKED_ABOUT",
+            "ANSWERS",
             "ASSOCIATED_WITH",
         }
         assert set(ontology.edge_type_names) == expected

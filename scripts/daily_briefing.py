@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Generate a daily briefing from the knowledge graph."""
+
 import sys
+
 sys.path.insert(0, ".")
 
 from second_brain.graph import Graph
 from second_brain.briefing import generate_briefing
+
 
 def main():
     graph = Graph()
@@ -20,9 +23,10 @@ def main():
         print(f"Analyzing graph ({entities} entities, {edges} edges)...")
         content = generate_briefing(graph)
         print(content)
-        print(f"\nBriefing saved to briefings/ directory.")
+        print("\nBriefing saved to briefings/ directory.")
     finally:
         graph.close()
+
 
 if __name__ == "__main__":
     main()

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Search the knowledge graph from the command line."""
+
 import argparse
 import sys
 
@@ -12,16 +13,17 @@ from second_brain.queries import QUERIES
 def search_keyword(graph, query, entity_type, limit):
     """Keyword search via Cypher CONTAINS."""
     if entity_type:
-        return graph.query(QUERIES["entity_by_label_and_type"],
-                           parameters={"query": query, "etype": entity_type,
-                                       "limit": limit})
-    return graph.query(QUERIES["entity_by_label"],
-                       parameters={"query": query, "limit": limit})
+        return graph.query(
+            QUERIES["entity_by_label_and_type"],
+            parameters={"query": query, "etype": entity_type, "limit": limit},
+        )
+    return graph.query(QUERIES["entity_by_label"], parameters={"query": query, "limit": limit})
 
 
 def search_semantic(graph, query, limit):
     """Semantic search via embedding similarity."""
     from second_brain.embed import embed_text
+
     query_embedding = embed_text(query)
     return graph.vector_search(query_embedding, limit=limit)
 
@@ -60,11 +62,13 @@ def search_hybrid(graph, query, entity_type, limit):
     for eid in sorted(rrf_scores, key=lambda x: -rrf_scores[x]):
         sources = match_sources[eid]
         match = "both" if len(sources) > 1 else sources.pop()
-        results.append({
-            **entity_data[eid],
-            "match": match,
-            "score": round(rrf_scores[eid], 4),
-        })
+        results.append(
+            {
+                **entity_data[eid],
+                "match": match,
+                "score": round(rrf_scores[eid], 4),
+            }
+        )
 
     return results[:limit]
 
@@ -123,22 +127,26 @@ def main():
     parser = argparse.ArgumentParser(
         description="Search the knowledge graph",
         epilog="Examples:\n"
-               "  %(prog)s -q 'spaced repetition'\n"
-               "  %(prog)s -q 'learning techniques' --mode semantic\n"
-               "  %(prog)s -q 'productivity' --mode hybrid\n"
-               "  %(prog)s -q 'meditation' --mode hidden\n"
-               "  %(prog)s --path 'meditation' 'creativity'\n",
+        "  %(prog)s -q 'spaced repetition'\n"
+        "  %(prog)s -q 'learning techniques' --mode semantic\n"
+        "  %(prog)s -q 'productivity' --mode hybrid\n"
+        "  %(prog)s -q 'meditation' --mode hidden\n"
+        "  %(prog)s --path 'meditation' 'creativity'\n",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--query", "-q", help="Search query")
-    parser.add_argument("--path", "-p", nargs=2, metavar=("FROM", "TO"),
-                        help="Find paths between two entities")
+    parser.add_argument(
+        "--path", "-p", nargs=2, metavar=("FROM", "TO"), help="Find paths between two entities"
+    )
     parser.add_argument("--type", "-t", help="Filter by entity type")
     parser.add_argument("--limit", "-l", type=int, default=10, help="Max results")
-    parser.add_argument("--mode", "-m",
-                        choices=["keyword", "semantic", "hybrid", "hidden"],
-                        default="keyword",
-                        help="Search mode: keyword, semantic, hybrid, or hidden (default: keyword)")
+    parser.add_argument(
+        "--mode",
+        "-m",
+        choices=["keyword", "semantic", "hybrid", "hidden"],
+        default="keyword",
+        help="Search mode: keyword, semantic, hybrid, or hidden (default: keyword)",
+    )
     args = parser.parse_args()
 
     if not args.query and not args.path:
@@ -156,15 +164,17 @@ def main():
         if args.mode == "hidden":
             # Hidden connections: find what's semantically close but not linked
             from second_brain.embed import embed_text
+
             query_emb = embed_text(args.query)
             # Find the entity closest to the query
             seeds = graph.vector_search(query_emb, limit=1)
             if seeds:
                 try:
                     from second_brain.hidden_connections import find_hidden_for_entity
+
                     results = find_hidden_for_entity(graph, seeds[0]["id"])
                     print(f"Hidden connections for: {seeds[0]['label']}\n")
-                    for r in results[:args.limit]:
+                    for r in results[: args.limit]:
                         rtype = r.get("target_type", r.get("type", ""))
                         rlabel = r.get("target_label", r.get("label", ""))
                         print(f"  [{rtype:15}] {rlabel}")

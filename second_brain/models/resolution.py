@@ -24,7 +24,9 @@ class ResolutionMatch(BaseModel):
 
     left: str
     right: str
-    rule: str = Field(description="Which matcher fired (normalized-equal, plural, acronym, surname, ...)")
+    rule: str = Field(
+        description="Which matcher fired (normalized-equal, plural, acronym, surname, ...)"
+    )
     confidence: float = Field(ge=0.0, le=1.0)
     evidence: str = Field(default="", description="Human-readable why")
 
@@ -51,8 +53,7 @@ class ResolutionResult(BaseModel):
         """The `{clusters: [{canonical, members}]}` shape run_er_eval consumes."""
         return {
             "clusters": [
-                {"canonical": c.canonical, "members": list(c.members)}
-                for c in self.clusters
+                {"canonical": c.canonical, "members": list(c.members)} for c in self.clusters
             ]
         }
 

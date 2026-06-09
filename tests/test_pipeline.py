@@ -9,16 +9,18 @@ Tests cover:
 
 All tests mock Ollama to avoid requiring a running server.
 """
-import time
+
 import pytest
 import numpy as np
 
 
-@pytest.mark.skip(reason="Needs a live LLM backend: the extractor's local path "
-                  "calls urllib /api/generate, but mock_ollama patches the "
-                  "'ollama' package, so extraction isn't intercepted. The "
-                  "ingest->graph->search roundtrip is validated end-to-end by "
-                  "the good-dog corpus run (see HANDOFF.md).")
+@pytest.mark.skip(
+    reason="Needs a live LLM backend: the extractor's local path "
+    "calls urllib /api/generate, but mock_ollama patches the "
+    "'ollama' package, so extraction isn't intercepted. The "
+    "ingest->graph->search roundtrip is validated end-to-end by "
+    "the good-dog corpus run (see HANDOFF.md)."
+)
 class TestIngestSearchRoundtrip:
     """Test writing a document, extracting entities, and searching for them."""
 
@@ -39,7 +41,9 @@ class TestIngestSearchRoundtrip:
         # Load extracted entities into the graph
         for entity in result["entities"]:
             graph.add_entity(
-                entity["id"], entity["entity_type"], entity["label"],
+                entity["id"],
+                entity["entity_type"],
+                entity["label"],
                 description=entity.get("description", ""),
                 confidence=entity.get("confidence", 0.5),
             )
@@ -49,6 +53,7 @@ class TestIngestSearchRoundtrip:
 
         # Keyword search should find entities
         from second_brain.queries import QUERIES
+
         results = graph.query(
             QUERIES["entity_by_label"],
             parameters={"query": "Einstein", "limit": 5},
@@ -91,8 +96,9 @@ class TestHiddenConnections:
         for r in results:
             pair_ids.add(frozenset({r["source_id"], r["target_id"]}))
 
-        assert frozenset({"e1", "e2"}) in pair_ids, \
-            f"Expected e1-e2 hidden connection, got pairs: {pair_ids}"
+        assert (
+            frozenset({"e1", "e2"}) in pair_ids
+        ), f"Expected e1-e2 hidden connection, got pairs: {pair_ids}"
 
 
 class TestCommunitySummaries:
@@ -122,6 +128,7 @@ class TestCommunitySummaries:
 
         # Verify CommunityMeta nodes exist in the graph
         from second_brain.queries import QUERIES
+
         count_rows = graph.query(QUERIES["community_count"])
         assert count_rows[0]["cnt"] >= 1
 
@@ -133,6 +140,7 @@ class TestDashboardAPI:
     def setup_app(self, graph, ontology):
         """Override the global graph and ontology in the dashboard module."""
         import second_brain.dashboard as dashboard_module
+
         # Inject our test graph and ontology
         dashboard_module.graph = graph
         dashboard_module.ontology = ontology
@@ -146,6 +154,7 @@ class TestDashboardAPI:
         """FastAPI TestClient for the dashboard app."""
         from fastapi.testclient import TestClient
         from second_brain.dashboard import app
+
         return TestClient(app, raise_server_exceptions=False)
 
     def test_dashboard_status_endpoint(self, client, graph):
@@ -168,11 +177,14 @@ class TestDashboardAPI:
         """GET /api/search?q=test&mode=keyword should return results."""
         graph.add_entity("e1", "concept", "test concept for search")
 
-        response = client.get("/api/search", params={
-            "q": "test",
-            "mode": "keyword",
-            "limit": 10,
-        })
+        response = client.get(
+            "/api/search",
+            params={
+                "q": "test",
+                "mode": "keyword",
+                "limit": 10,
+            },
+        )
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
@@ -201,10 +213,13 @@ class TestDashboardAPI:
         graph.add_entity("b", "concept", "beta concept")
         graph.add_edge("a", "b", "SUPPORTS")
 
-        response = client.get("/api/path", params={
-            "source": "alpha",
-            "target": "beta",
-        })
+        response = client.get(
+            "/api/path",
+            params={
+                "source": "alpha",
+                "target": "beta",
+            },
+        )
         assert response.status_code == 200
         data = response.json()
         assert "paths" in data

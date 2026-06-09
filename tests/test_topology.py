@@ -8,7 +8,7 @@ Tests cover:
   - Betweenness centrality on bridge nodes
   - Skeleton extraction for visualization
 """
-import pytest
+
 import networkx as nx
 
 
@@ -18,6 +18,7 @@ class TestRunTopology:
     def test_run_topology_empty_graph(self, graph):
         """Topology analysis on an empty graph should return a zeroed report."""
         from second_brain.topology import run_topology
+
         report = run_topology(graph)
         assert report.node_count == 0
         assert report.edge_count == 0
@@ -29,6 +30,7 @@ class TestRunTopology:
     def test_run_topology_with_data(self, populated_graph):
         """Topology on a populated graph should detect nodes and edges."""
         from second_brain.topology import run_topology
+
         report = run_topology(populated_graph)
         assert report.node_count == 6  # 6 entities in populated_graph
         assert report.edge_count == 4  # 4 RELATES_TO edges
@@ -42,6 +44,7 @@ class TestBuildNetworkXGraph:
     def test_build_networkx_graph(self, populated_graph):
         """NetworkX graph should mirror the LadybugDB entity/edge counts."""
         from second_brain.topology import build_networkx_graph
+
         G = build_networkx_graph(populated_graph)
         assert G.number_of_nodes() == 6
         assert G.number_of_edges() == 4
@@ -70,6 +73,7 @@ class TestCommunityGaps:
         graph.add_edge("b1", "b3", "SUPPORTS")
 
         from second_brain.topology import run_topology
+
         report = run_topology(graph)
         # Should detect 2 components
         assert report.component_count >= 2

@@ -57,7 +57,9 @@ class ChunkStore:
     ):
         self.db_path = Path(db_path)
         self.read_only = read_only
-        self.embedding_dim = embedding_dim
+        self.embedding_dim = int(embedding_dim)
+        if self.embedding_dim <= 0:
+            raise ValueError("embedding_dim must be positive")
         self._ro: Optional[duckdb.DuckDBPyConnection] = None
         self._mem: Optional[duckdb.DuckDBPyConnection] = None
 
@@ -65,6 +67,10 @@ class ChunkStore:
         """Open read-only persistent handle for FTS queries."""
         if self._ro is None:
             self._ro = duckdb.connect(str(self.db_path), read_only=True)
+            try:
+                self._ro.execute("LOAD fts;")
+            except Exception:
+                pass
         return self._ro
 
     def _open_mem(self) -> duckdb.DuckDBPyConnection:
@@ -91,7 +97,12 @@ class ChunkStore:
 
     def _open_rw(self) -> duckdb.DuckDBPyConnection:
         """Open read-write handle for writer process."""
-        return duckdb.connect(str(self.db_path), read_only=False)
+        conn = duckdb.connect(str(self.db_path), read_only=False)
+        try:
+            conn.execute("LOAD vss;")
+        except Exception:
+            pass
+        return conn
 
     def init_schema(self) -> None:
         """
@@ -101,8 +112,13 @@ class ChunkStore:
         """
         rw = self._open_rw()
         try:
+            try:
+                rw.execute("LOAD fts;")
+            except Exception:
+                pass
+
             # Chunk table — FLOAT[dim] for fixed-dim HNSW compatibility
-            rw.execute("""
+            rw.execute(f"""
                 CREATE TABLE IF NOT EXISTS chunk (
                     id              VARCHAR PRIMARY KEY,
                     doc_id          VARCHAR NOT NULL,
@@ -110,7 +126,8 @@ class ChunkStore:
                     title           VARCHAR,
                     body            VARCHAR NOT NULL,
                     chunk_index     INTEGER NOT NULL,
-                    entity_ids      VARCHAR[],
+                    entity_ids      VARCHAR,
+                    embedding       FLOAT[{self.embedding_dim}],
                     sensitivity     VARCHAR DEFAULT 'public',
                     created_at      TIMESTAMP DEFAULT current_timestamp,
                     source_mtime    TIMESTAMP,
@@ -120,7 +137,7 @@ class ChunkStore:
 
             # Indexes
             rw.execute("CREATE INDEX IF NOT EXISTS idx_chunk_doc ON chunk(doc_id);")
-            rw.execute("CREATE INDEX IF NOT EXISTS idx_chunk_entity ON chunk USING GIN(entity_ids);")
+            rw.execute("CREATE INDEX IF NOT EXISTS idx_chunk_sensitivity ON chunk(sensitivity);")
 
             # FTS index (BM25) — must rebuild after batch inserts
             # PRAGMA create_fts_index is idempotent with overwrite=1
@@ -134,22 +151,9 @@ class ChunkStore:
                 );
             """)
 
-            # HNSW vector index — requires LOAD vss first
-            # HNSW UPDATE blocked: use DELETE + INSERT only
-            try:
-                rw.execute("LOAD vss;")
-            except Exception:
-                pass  # vss may already be loaded in this session
-
-            rw.execute("SET hnsw_enable_experimental_persistence = true;")
-            try:
-                rw.execute("""
-                    CREATE INDEX IF NOT EXISTS chunk_embedding_hnsw
-                    ON chunk USING HNSW (embedding)
-                    WITH (metric='cosine', ef_construction=200, M=32);
-                """)
-            except Exception:
-                pass  # Index may already exist
+            # HNSW is built in memory by _open_mem(). Avoid persistent HNSW here:
+            # DuckDB marks persistent HNSW experimental, and writes require the
+            # vss extension loaded in every modifying connection.
 
         finally:
             rw.close()
@@ -180,6 +184,7 @@ class ChunkStore:
                     "body": c["body"],
                     "chunk_index": c["chunk_index"],
                     "entity_ids": json.dumps(c.get("entity_ids", [])),
+                    "embedding": c.get("embedding"),
                     "sensitivity": c.get("sensitivity", "public"),
                     "created_at": datetime.now(timezone.utc),
                     "source_mtime": c.get("source_mtime"),
@@ -213,10 +218,7 @@ class ChunkStore:
         """
         rw = self._open_rw()
         try:
-            result = rw.execute(
-                "SELECT count(*) FROM chunk WHERE doc_id = ?",
-                [doc_id]
-            ).fetchone()
+            result = rw.execute("SELECT count(*) FROM chunk WHERE doc_id = ?", [doc_id]).fetchone()
             count = result[0] if result else 0
 
             rw.execute("DELETE FROM chunk WHERE doc_id = ?", [doc_id])
@@ -245,10 +247,10 @@ class ChunkStore:
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        table = pa.Table.from_pylist(rows, preserve_index=False)
+        table = pa.Table.from_pylist(rows)
         with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             pq.write_table(table, f.name)
-            rw.execute(f"COPY chunk FROM '{f.name}' (FORMAT PARQUET);")
+            rw.execute("INSERT INTO chunk BY NAME SELECT * FROM read_parquet(?)", [f.name])
             Path(f.name).unlink()
 
     def upsert_chunk_with_embedding(
@@ -316,7 +318,9 @@ class ChunkStore:
 
         # BM25 via persistent read-only handle
         ro = self._open_ro()
-        bm25_results = ro.execute("""
+        filter_sql = ", ".join("?" for _ in filters)
+        bm25_results = ro.execute(
+            f"""
             WITH bm25 AS (
                 SELECT
                     id,
@@ -326,36 +330,46 @@ class ChunkStore:
                         chunk.id,
                         fts_main_chunk.match_bm25(id, ?) AS score
                     FROM chunk
-                    WHERE sensitivity = ANY(?) AND score IS NOT NULL
+                    WHERE sensitivity IN ({filter_sql})
+                ) t
+                WHERE score IS NOT NULL
                     ORDER BY score DESC
                     LIMIT 50
-                ) t
             )
             SELECT id, rank FROM bm25 ORDER BY rank;
-        """, [query, filters]).fetchall()
+        """,
+            [query, *filters],
+        ).fetchall()
 
         if query_embedding is None:
             # BM25-only fallback
             ids = [r[0] for r in bm25_results[:limit]]
             if not ids:
                 return []
-            rows = ro.execute(f"""
-                SELECT id, body, title, source_uri, doc_id
-                FROM chunk WHERE id IN ({','.join("'"+i+"'" for i in ids)})
-            """).fetchall()
+            rows = self._fetch_chunks_by_ids(ro, ids)
             return [
-                {"id": r[0], "body": r[1], "title": r[2], "source_uri": r[3], "doc_id": r[4], "rrf_score": 1.0 / (60 + rank)}
-                for rank, (r, _) in enumerate(zip(rows, ids), 1)
+                {
+                    "id": r[0],
+                    "body": r[1],
+                    "title": r[2],
+                    "source_uri": r[3],
+                    "doc_id": r[4],
+                    "rrf_score": 1.0 / (60 + rank),
+                }
+                for rank, r in enumerate(rows, 1)
             ]
 
         # ANN via in-memory handle (HNSW)
         mem = self._open_mem()
-        ann_results = mem.execute("""
+        ann_results = mem.execute(
+            """
             SELECT id, ROW_NUMBER() OVER (ORDER BY array_cosine_distance(embedding, ?)) AS rank
             FROM chunk_vec
             ORDER BY array_cosine_distance(embedding, ?)
             LIMIT 50;
-        """, [query_embedding, query_embedding]).fetchall()
+        """,
+            [query_embedding, query_embedding],
+        ).fetchall()
 
         # RRF fusion in Python
         bm25_map = {id_: rank for id_, rank in bm25_results}
@@ -366,8 +380,9 @@ class ChunkStore:
         for id_ in all_ids:
             bm25_rank = bm25_map.get(id_, 0)
             ann_rank = ann_map.get(id_, 0)
-            rrf = (1.0 / (RRF_K + bm25_rank) if bm25_rank else 0.0) + \
-                  (1.0 / (RRF_K + ann_rank) if ann_rank else 0.0)
+            rrf = (1.0 / (RRF_K + bm25_rank) if bm25_rank else 0.0) + (
+                1.0 / (RRF_K + ann_rank) if ann_rank else 0.0
+            )
             rrf_scores.append((id_, rrf))
 
         rrf_scores.sort(key=lambda x: x[1], reverse=True)
@@ -377,11 +392,7 @@ class ChunkStore:
             return []
 
         # Fetch full chunk data via persistent handle
-        rows = ro.execute(f"""
-            SELECT id, body, title, source_uri, doc_id
-            FROM chunk
-            WHERE id IN ({','.join("'"+i+"'" for i in top_ids)})
-        """).fetchall()
+        rows = self._fetch_chunks_by_ids(ro, top_ids)
 
         score_map = dict(rrf_scores)
         return [
@@ -396,12 +407,28 @@ class ChunkStore:
             for r in rows
         ]
 
+    @staticmethod
+    def _fetch_chunks_by_ids(
+        conn: duckdb.DuckDBPyConnection, ids: list[str]
+    ) -> list[tuple[str, str, str, str, str]]:
+        placeholders = ", ".join("?" for _ in ids)
+        rows = conn.execute(
+            f"""
+            SELECT id, body, title, source_uri, doc_id
+            FROM chunk
+            WHERE id IN ({placeholders})
+            """,
+            ids,
+        ).fetchall()
+        row_by_id = {row[0]: row for row in rows}
+        return [row_by_id[id_] for id_ in ids if id_ in row_by_id]
+
     def get_chunk_by_id(self, chunk_id: str) -> Optional[dict[str, Any]]:
         """Get a single chunk by ID."""
         ro = self._open_ro()
         row = ro.execute(
             "SELECT id, doc_id, source_uri, title, body, chunk_index, entity_ids, sensitivity, embedded_at FROM chunk WHERE id = ?",
-            [chunk_id]
+            [chunk_id],
         ).fetchone()
         if not row:
             return None
@@ -422,10 +449,14 @@ class ChunkStore:
         ro = self._open_ro()
         try:
             total = ro.execute("SELECT count(*) FROM chunk").fetchone()[0]
-            embedded = ro.execute("SELECT count(*) FROM chunk WHERE embedded_at IS NOT NULL").fetchone()[0]
-            sensitivity_counts = dict(ro.execute("""
+            embedded = ro.execute(
+                "SELECT count(*) FROM chunk WHERE embedded_at IS NOT NULL"
+            ).fetchone()[0]
+            sensitivity_counts = dict(
+                ro.execute("""
                 SELECT sensitivity, count(*) FROM chunk GROUP BY sensitivity
-            """).fetchall())
+            """).fetchall()
+            )
             return {
                 "total_chunks": total,
                 "embedded_chunks": embedded,
@@ -436,6 +467,7 @@ class ChunkStore:
             }
         finally:
             ro.close()
+            self._ro = None
 
     def close(self) -> None:
         """Close all handles."""

@@ -34,9 +34,11 @@ DEFAULT_K = 5
 # Query definitions — 20 queries across 5 categories (4 each)
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class EvalQuery:
     """A single evaluation query with expected results."""
+
     category: str
     query: str
     mode: str  # semantic, graph, hybrid, path
@@ -76,7 +78,6 @@ QUERIES: list[EvalQuery] = [
         expected=["context", "strateg", "filter", "task_type"],
         description="Retrieval architecture knowledge",
     ),
-
     # ── Category 2: Multi-hop Path ─────────────────────────────────────
     # Unique to graph-based systems — chain reasoning across typed edges
     EvalQuery(
@@ -107,7 +108,6 @@ QUERIES: list[EvalQuery] = [
         expected=["ontology", "valid", "bridge", "false"],
         description="Causal chain: bad types → wrong edges → false bridges",
     ),
-
     # ── Category 3: Contradiction Detection ────────────────────────────
     # Unique — can the system surface conflicting claims?
     EvalQuery(
@@ -142,7 +142,6 @@ QUERIES: list[EvalQuery] = [
         expected=["schema", "consolidat", "table", "edge"],
         description="Schema evolution: 22 tables → 8, old vs new",
     ),
-
     # ── Category 4: Gap Detection ──────────────────────────────────────
     # Unique — does topology find what's missing?
     EvalQuery(
@@ -178,7 +177,6 @@ QUERIES: list[EvalQuery] = [
         expected=["synthes", "cluster", "communit", "gap"],
         description="Creative gap — topology synthesis suggestions",
     ),
-
     # ── Category 5: Thematic/Global ────────────────────────────────────
     # Community-level reasoning, broad questions — tests mode=global
     EvalQuery(
@@ -217,6 +215,7 @@ QUERIES: list[EvalQuery] = [
 # ---------------------------------------------------------------------------
 # Evaluation logic
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class QueryResult:
@@ -271,8 +270,13 @@ def evaluate_query(eq: EvalQuery, k: int) -> QueryResult:
         results = search_api(eq.query, eq.mode, limit=k, api_base=_API_BASE)
     except Exception as e:
         return QueryResult(
-            query=eq, hit=False, matched_terms=[], missed_terms=eq.expected,
-            top_results=[], latency_ms=0, error=str(e),
+            query=eq,
+            hit=False,
+            matched_terms=[],
+            missed_terms=eq.expected,
+            top_results=[],
+            latency_ms=0,
+            error=str(e),
         )
 
     latency = (time.monotonic() - t0) * 1000
@@ -294,8 +298,12 @@ def evaluate_query(eq: EvalQuery, k: int) -> QueryResult:
     top_paths = [r.get("path", "?") for r in results[:3]]
 
     return QueryResult(
-        query=eq, hit=hit, matched_terms=matched, missed_terms=missed,
-        top_results=top_paths, latency_ms=latency,
+        query=eq,
+        hit=hit,
+        matched_terms=matched,
+        missed_terms=missed,
+        top_results=top_paths,
+        latency_ms=latency,
     )
 
 
@@ -317,7 +325,11 @@ def run_eval(
 
         if eq.category not in scores:
             scores[eq.category] = CategoryScore(
-                category=eq.category, total=0, hits=0, recall=0.0, avg_latency_ms=0.0,
+                category=eq.category,
+                total=0,
+                hits=0,
+                recall=0.0,
+                avg_latency_ms=0.0,
             )
 
         cat = scores[eq.category]
@@ -347,7 +359,7 @@ def run_eval(
     return scores
 
 
-def print_report(scores: dict[str, CategoryScore], k: int) -> None:
+def print_report(scores: dict[str, CategoryScore], k: int) -> dict:
     """Print the evaluation report."""
     print()
     print(f"Vault-RAG Retrieval Eval — Recall@{k}")
@@ -374,7 +386,9 @@ def print_report(scores: dict[str, CategoryScore], k: int) -> None:
         elif cat_name in ("path", "contradiction", "gap"):
             note = "  (no published baseline)"
 
-        print(f"  {cat_name:<16} {bar} {cat.hits}/{cat.total}  R@{k}={pct:5.1f}%  avg={cat.avg_latency_ms:.0f}ms{note}")
+        print(
+            f"  {cat_name:<16} {bar} {cat.hits}/{cat.total}  R@{k}={pct:5.1f}%  avg={cat.avg_latency_ms:.0f}ms{note}"
+        )
 
     overall = total_hits / total_queries * 100 if total_queries > 0 else 0
     print(f"  {'─' * 56}")
@@ -403,11 +417,13 @@ def print_report(scores: dict[str, CategoryScore], k: int) -> None:
     out_file.write_text(json.dumps(export, indent=2))
     print(f"  Results saved to {out_file}")
     print()
+    return export
 
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def main():
     global _API_BASE
@@ -417,6 +433,12 @@ def main():
     parser.add_argument("--k", type=int, default=DEFAULT_K, help="Recall@K (default: 5)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show per-query details")
     parser.add_argument("--api", default=_API_BASE, help="API base URL")
+    parser.add_argument(
+        "--fail-under",
+        type=float,
+        default=None,
+        help="Exit non-zero if overall recall is below this threshold.",
+    )
     args = parser.parse_args()
 
     _API_BASE = args.api
@@ -441,7 +463,12 @@ def main():
     print()
 
     scores = run_eval(categories=categories, k=args.k, verbose=args.verbose)
-    print_report(scores, args.k)
+    export = print_report(scores, args.k)
+    if args.fail_under is not None and export["overall_recall"] < args.fail_under:
+        print(
+            f"FAIL: overall recall {export['overall_recall']:.4f} < --fail-under {args.fail_under:.4f}"
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":

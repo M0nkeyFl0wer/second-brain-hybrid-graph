@@ -7,7 +7,6 @@ Tests cover:
   - Tag extraction (inline and frontmatter)
   - Text chunking with overlap
 """
-import pytest
 
 from second_brain.obsidian import (
     parse_frontmatter,

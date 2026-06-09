@@ -28,6 +28,7 @@ def _load_entities(graph_dir: Path) -> tuple[list[dict], dict[str, list[float]]]
     """Return (entities, embeddings) from the graph. Embeddings power the
     Tier-2 similarity matcher; entities without a vector simply don't get one."""
     from second_brain.graph import Graph
+
     g = Graph(graph_dir, read_only=True)
     try:
         rows = g.query(
@@ -37,11 +38,7 @@ def _load_entities(graph_dir: Path) -> tuple[list[dict], dict[str, list[float]]]
     finally:
         g.close()
     entities = [{"label": r["label"], "entity_type": r["entity_type"]} for r in rows]
-    embeddings = {
-        r["label"]: list(r["embedding"])
-        for r in rows
-        if r.get("embedding") is not None
-    }
+    embeddings = {r["label"]: list(r["embedding"]) for r in rows if r.get("embedding") is not None}
     return entities, embeddings
 
 
@@ -49,18 +46,28 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--graph", default=str(config.GRAPH_DIR))
     ap.add_argument("--out", default=str(Path(config.GRAPH_DIR).parent / "resolution.json"))
-    ap.add_argument("--min-cluster", type=int, default=2,
-                    help="Only report clusters with at least this many members (default 2).")
-    ap.add_argument("--no-embeddings", action="store_true",
-                    help="Disable the Tier-2 embedding similarity matcher.")
-    ap.add_argument("--apply", action="store_true",
-                    help="(Phase D, not implemented) apply merges to the graph.")
+    ap.add_argument(
+        "--min-cluster",
+        type=int,
+        default=2,
+        help="Only report clusters with at least this many members (default 2).",
+    )
+    ap.add_argument(
+        "--no-embeddings",
+        action="store_true",
+        help="Disable the Tier-2 embedding similarity matcher.",
+    )
+    ap.add_argument(
+        "--apply", action="store_true", help="(Phase D, not implemented) apply merges to the graph."
+    )
     args = ap.parse_args(argv)
 
     if args.apply:
-        print("--apply is not implemented: graph mutation must go through the "
-              "ladybug-surgery skill (Phase D). This tool is dry-run only.",
-              file=sys.stderr)
+        print(
+            "--apply is not implemented: graph mutation must go through the "
+            "ladybug-surgery skill (Phase D). This tool is dry-run only.",
+            file=sys.stderr,
+        )
         return 2
 
     entities, embeddings = _load_entities(Path(args.graph))
@@ -71,10 +78,14 @@ def main(argv: list[str] | None = None) -> int:
     reported = [c for c in result.clusters if len(c.members) >= args.min_cluster]
     Path(args.out).write_text(json.dumps(result.to_eval_dict(), indent=2, ensure_ascii=False))
 
-    print(f"Resolved {len(entities)} entities → {len(result.clusters)} clusters "
-          f"({result.merged_count} labels folded).")
-    print(f"  {len(reported)} multi-member cluster(s) (>= {args.min_cluster}); "
-          f"full clustering written to {args.out}")
+    print(
+        f"Resolved {len(entities)} entities → {len(result.clusters)} clusters "
+        f"({result.merged_count} labels folded)."
+    )
+    print(
+        f"  {len(reported)} multi-member cluster(s) (>= {args.min_cluster}); "
+        f"full clustering written to {args.out}"
+    )
     for c in sorted(reported, key=lambda c: -len(c.members))[:15]:
         print(f"    {c.canonical!r}  <-  {c.aliases}")
     return 0

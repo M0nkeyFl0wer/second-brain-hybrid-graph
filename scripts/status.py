@@ -6,8 +6,8 @@ hidden connections count, type distribution, and last ingestion time.
 
 Usage: python scripts/status.py
 """
+
 import sys
-import time
 from datetime import datetime
 
 sys.path.insert(0, ".")
@@ -57,8 +57,7 @@ def main():
         # Last ingestion time
         last_ingested = None
         try:
-            r = graph.query(
-                "MATCH (d:Document) RETURN d.ingested_at AS t ORDER BY t DESC LIMIT 1")
+            r = graph.query("MATCH (d:Document) RETURN d.ingested_at AS t ORDER BY t DESC LIMIT 1")
             if r and r[0]["t"]:
                 last_ingested = datetime.fromtimestamp(r[0]["t"])
         except Exception:
@@ -66,11 +65,13 @@ def main():
 
         # Type distribution
         type_dist = graph.query(
-            "MATCH (e:Entity) RETURN e.entity_type AS type, count(e) AS cnt ORDER BY cnt DESC")
+            "MATCH (e:Entity) RETURN e.entity_type AS type, count(e) AS cnt ORDER BY cnt DESC"
+        )
 
         # Edge type distribution
         edge_dist = graph.query(
-            "MATCH ()-[r:RELATES_TO]->() RETURN r.edge_type AS type, count(r) AS cnt ORDER BY cnt DESC")
+            "MATCH ()-[r:RELATES_TO]->() RETURN r.edge_type AS type, count(r) AS cnt ORDER BY cnt DESC"
+        )
 
         # Ontology health metrics
         declared_types = set(ontology.entity_type_names)
@@ -90,13 +91,13 @@ def main():
         # fall back to live scan (slow, O(n*k) for n entities)
         hidden_count = 0
         try:
-            r = graph.query(
-                "MATCH (m:_SchemaMeta {id: 'hidden_count'}) RETURN m.version AS cnt")
+            r = graph.query("MATCH (m:_SchemaMeta {id: 'hidden_count'}) RETURN m.version AS cnt")
             if r:
                 hidden_count = r[0]["cnt"]
             else:
                 # No cache — run live scan (slow on large graphs)
                 from second_brain.hidden_connections import find_hidden_connections
+
                 hidden = find_hidden_connections(graph, top_n=100)
                 hidden_count = len(hidden)
         except Exception:
@@ -136,7 +137,7 @@ def main():
         if unpop_types:
             print(f"║  Unused types: {', '.join(sorted(unpop_types)):<40} ║")
         if unpop_edges:
-            edge_str = ', '.join(sorted(unpop_edges))
+            edge_str = ", ".join(sorted(unpop_edges))
             if len(edge_str) > 40:
                 edge_str = edge_str[:37] + "..."
             print(f"║  Unused edges: {edge_str:<40} ║")

@@ -11,6 +11,7 @@ Tests cover:
   - Document registration
   - Persistence across close/reopen
 """
+
 import time
 import numpy as np
 
@@ -33,7 +34,9 @@ class TestEntityCRUD:
     def test_add_entity_with_metadata(self, graph):
         """Entity should store all metadata fields."""
         graph.add_entity(
-            "e1", "person", "Ada Lovelace",
+            "e1",
+            "person",
+            "Ada Lovelace",
             description="First programmer",
             confidence=0.95,
             source_url="https://example.com",
@@ -52,12 +55,10 @@ class TestEntityCRUD:
     def test_add_entity_merge_updates_timestamp(self, graph):
         """Adding the same entity ID again should update updated_at (MERGE)."""
         graph.add_entity("e1", "concept", "test")
-        rows_before = graph.query(
-            "MATCH (e:Entity {id: 'e1'}) RETURN e.updated_at AS t")
+        rows_before = graph.query("MATCH (e:Entity {id: 'e1'}) RETURN e.updated_at AS t")
         time.sleep(0.01)  # ensure timestamp changes
         graph.add_entity("e1", "concept", "test")
-        rows_after = graph.query(
-            "MATCH (e:Entity {id: 'e1'}) RETURN e.updated_at AS t")
+        rows_after = graph.query("MATCH (e:Entity {id: 'e1'}) RETURN e.updated_at AS t")
         # Count should still be 1 (MERGE, not duplicate)
         assert graph.entity_count() == 1
         assert rows_after[0]["t"] >= rows_before[0]["t"]
@@ -92,6 +93,23 @@ class TestEdgeCRUD:
     def test_multiple_edges(self, populated_graph):
         """The populated_graph fixture should have exactly 4 edges."""
         assert populated_graph.edge_count() == 4
+
+    def test_bulk_add_mentions_connects_entities_to_documents(self, graph):
+        graph.add_document("d1", "note.md", "Note")
+        graph.add_entity("e1", "concept", "Graph database")
+
+        count = graph.bulk_add_mentions(
+            [{"entity_id": "e1", "doc_id": "d1", "source_url": "note.md"}]
+        )
+
+        assert count == 1
+        rows = graph.query(
+            """
+            MATCH (e:Entity {id: 'e1'})-[r:MENTIONED_IN]->(d:Document {id: 'd1'})
+            RETURN e.id AS entity_id, d.id AS doc_id, r.edge_type AS edge_type
+            """
+        )
+        assert rows == [{"entity_id": "e1", "doc_id": "d1", "edge_type": "MENTIONED_IN"}]
 
 
 class TestBulkOperations:
@@ -196,7 +214,9 @@ class TestEdgeNode:
         graph.add_entity("c", "concept", "C")
 
         result = graph.add_edge_node(
-            "en1", "similar_edge", label="A is like B and C",
+            "en1",
+            "similar_edge",
+            label="A is like B and C",
             participants=["a", "b", "c"],
         )
         assert result is True
@@ -210,8 +230,7 @@ class TestEdgeNode:
 
         # Verify BINDS traversal (en1 -> b, en1 -> c)
         binds = graph.query(
-            "MATCH (en:EdgeNode {id: 'en1'})-[:BINDS]->(e:Entity) "
-            "RETURN e.id AS id"
+            "MATCH (en:EdgeNode {id: 'en1'})-[:BINDS]->(e:Entity) " "RETURN e.id AS id"
         )
         assert len(binds) == 2
         bound_ids = {row["id"] for row in binds}

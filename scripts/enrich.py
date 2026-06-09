@@ -77,41 +77,49 @@ def _wikilink_entity_id(label: str) -> str:
 def _add_obsidian_entities(note: dict, result: dict, ontology) -> None:
     """Add deterministic entities/edges derived from Obsidian metadata."""
     for tag in note["tags"]:
-        result["entities"].append({
-            "id": f"tag_{tag}",
-            "entity_type": "concept",
-            "label": tag,
-            "description": f"Tag: #{tag}",
-            "confidence": 0.8,
-            "source_url": note["path"],
-            "provenance": "obsidian_tag",
-        })
+        result["entities"].append(
+            {
+                "id": f"tag_{tag}",
+                "entity_type": "concept",
+                "label": tag,
+                "description": f"Tag: #{tag}",
+                "confidence": 0.8,
+                "source_url": note["path"],
+                "provenance": "obsidian_tag",
+            }
+        )
 
     if not ontology.validate_edge_type("ASSOCIATED_WITH"):
         return
 
     for link_target in note["wikilinks"]:
         link_id = _wikilink_entity_id(link_target)
-        result["entities"].append({
-            "id": link_id,
-            "entity_type": "concept",
-            "label": link_target,
-            "description": f"Linked note: [[{link_target}]]",
-            "confidence": 0.8,
-            "source_url": note["path"],
-            "provenance": "obsidian_wikilink",
-        })
-        result["edges"].append({
-            "source_id": note["doc_id"],
-            "target_id": link_id,
-            "edge_type": "ASSOCIATED_WITH",
-            "confidence": 0.9,
-            "source_url": note["path"],
-            "provenance": "obsidian_wikilink",
-        })
+        result["entities"].append(
+            {
+                "id": link_id,
+                "entity_type": "concept",
+                "label": link_target,
+                "description": f"Linked note: [[{link_target}]]",
+                "confidence": 0.8,
+                "source_url": note["path"],
+                "provenance": "obsidian_wikilink",
+            }
+        )
+        result["edges"].append(
+            {
+                "source_id": note["doc_id"],
+                "target_id": link_id,
+                "edge_type": "ASSOCIATED_WITH",
+                "confidence": 0.9,
+                "source_url": note["path"],
+                "provenance": "obsidian_wikilink",
+            }
+        )
 
 
-def enrich_note(note: dict, graph: Graph, extractor: Extractor, ontology, embed: bool) -> dict[str, int]:
+def enrich_note(
+    note: dict, graph: Graph, extractor: Extractor, ontology, embed: bool
+) -> dict[str, int]:
     """Extract entities/edges from one note and write through Graph API."""
     result = extractor.extract_from_text(
         note["body"], source_url=note["path"], doc_id=note["doc_id"]
@@ -132,7 +140,9 @@ def enrich_note(note: dict, graph: Graph, extractor: Extractor, ontology, embed:
     seen_entities = {}
     for entity in result["entities"]:
         eid = entity["id"]
-        if eid not in seen_entities or entity.get("confidence", 0) > seen_entities[eid].get("confidence", 0):
+        if eid not in seen_entities or entity.get("confidence", 0) > seen_entities[eid].get(
+            "confidence", 0
+        ):
             seen_entities[eid] = entity
 
     for entity in seen_entities.values():
@@ -177,10 +187,18 @@ def main() -> int:
     parser.add_argument("--ontology", "-o", default=None, help="YAML ontology path")
     parser.add_argument("--graph", default=str(config.GRAPH_DIR), help="Graph DB path")
     parser.add_argument("--last-run-file", default=str(LAST_RUN_FILE), help="Last-run marker path")
-    parser.add_argument("--limit", type=int, default=None, help="Limit notes processed (smoke tests)")
-    parser.add_argument("--force", action="store_true", help="Process all notes regardless of last-run marker")
-    parser.add_argument("--dry-run", action="store_true", help="Scan and extract, but do not write graph")
-    parser.add_argument("--embed", action="store_true", help="Embed new/updated entities during enrichment")
+    parser.add_argument(
+        "--limit", type=int, default=None, help="Limit notes processed (smoke tests)"
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="Process all notes regardless of last-run marker"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Scan and extract, but do not write graph"
+    )
+    parser.add_argument(
+        "--embed", action="store_true", help="Embed new/updated entities during enrichment"
+    )
     args = parser.parse_args()
 
     if not args.vault:
@@ -189,7 +207,11 @@ def main() -> int:
 
     start = datetime.now(timezone.utc)
     last_run_file = Path(args.last_run_file)
-    since = datetime(1970, 1, 1, tzinfo=timezone.utc) if args.force else get_last_run_time(last_run_file)
+    since = (
+        datetime(1970, 1, 1, tzinfo=timezone.utc)
+        if args.force
+        else get_last_run_time(last_run_file)
+    )
 
     log("=== Starting enrichment pass ===")
     log(f"Vault: {args.vault}")
@@ -197,7 +219,7 @@ def main() -> int:
 
     notes = select_recent_notes(args.vault, since)
     if args.limit is not None:
-        notes = notes[:args.limit]
+        notes = notes[: args.limit]
     log(f"Found {len(notes)} notes to process")
 
     if not notes:
@@ -226,7 +248,9 @@ def main() -> int:
         for i, note in enumerate(notes, 1):
             try:
                 if args.dry_run:
-                    result = extractor.extract_from_text(note["body"], source_url=note["path"], doc_id=note["doc_id"])
+                    result = extractor.extract_from_text(
+                        note["body"], source_url=note["path"], doc_id=note["doc_id"]
+                    )
                     stats = {
                         "entities_seen": len(result["entities"]),
                         "entities_written": 0,

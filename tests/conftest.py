@@ -7,6 +7,7 @@ Provides:
   - populated_graph:   Graph with known entities and edges for query tests
   - mock_ollama:       Monkeypatch for ollama.embed and ollama.chat
 """
+
 import pytest
 import shutil
 import numpy as np
@@ -20,6 +21,7 @@ def ontology(tmp_path):
     dst = tmp_path / "ONTOLOGY.md"
     shutil.copy(src, dst)
     from second_brain.ontology import Ontology
+
     return Ontology(str(dst))
 
 
@@ -27,6 +29,7 @@ def ontology(tmp_path):
 def graph(tmp_path, ontology):
     """Fresh LadybugDB graph in a temp directory."""
     from second_brain.graph import Graph
+
     g = Graph(tmp_path / "test.lbug", ontology)
     yield g
     g.close()
@@ -55,6 +58,7 @@ def mock_ollama(monkeypatch):
     Patches ollama.embed to return deterministic 768-dim vectors
     and ollama.chat to return empty extraction results.
     """
+
     def fake_embed(model, input, **kwargs):
         """Return reproducible embeddings seeded by input text."""
         if isinstance(input, list):

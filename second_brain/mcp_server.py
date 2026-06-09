@@ -13,6 +13,7 @@ and the tools handle all graph operations internally.
 Run: python -m second_brain.mcp_server
 Or configure in Claude Code settings as an MCP server.
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,18 +29,20 @@ except ImportError:
 
 from second_brain.graph import Graph
 from second_brain.ontology import Ontology
-from second_brain.extract import Extractor, generate_entity_id
+from second_brain.extract import Extractor
 from second_brain.embed import embed_text
 
 # Optional modules — graceful degradation if not available
 try:
     from second_brain.community_summaries import search_communities
+
     _HAS_COMMUNITIES = True
 except ImportError:
     _HAS_COMMUNITIES = False
 
 try:
     from second_brain.hidden_connections import find_hidden_for_entity
+
     _HAS_HIDDEN = True
 except ImportError:
     _HAS_HIDDEN = False
@@ -56,8 +59,8 @@ mcp = FastMCP("second-brain")
 # Lazy-initialized singletons. Created on first tool call so the server
 # process starts fast and the graph directory is only opened when needed.
 # Thread-safe via _init_lock (double-check locking pattern).
-import atexit
-import threading
+import atexit  # noqa: E402
+import threading  # noqa: E402
 
 _graph: Graph | None = None
 _ontology: Ontology | None = None
@@ -102,6 +105,7 @@ atexit.register(_shutdown)
 # ===========================================================================
 # Tool 1: memory_write
 # ===========================================================================
+
 
 @mcp.tool()
 def memory_write(thought: str, tags: list[str] | None = None) -> str:
@@ -202,6 +206,7 @@ def memory_write(thought: str, tags: list[str] | None = None) -> str:
 # Tool 2: memory_zoom_out
 # ===========================================================================
 
+
 @mcp.tool()
 def memory_zoom_out(query: str) -> str:
     """Answer broad, thematic questions by searching pre-computed community summaries.
@@ -242,7 +247,7 @@ def memory_zoom_out(query: str) -> str:
             )
 
         # Format the results into a readable summary
-        parts = [f"Found {len(communities)} relevant knowledge clusters for: \"{query}\"\n"]
+        parts = [f'Found {len(communities)} relevant knowledge clusters for: "{query}"\n']
 
         for i, comm in enumerate(communities, 1):
             comm_id = comm.get("community_id", "?")
@@ -269,6 +274,7 @@ def memory_zoom_out(query: str) -> str:
 # ===========================================================================
 # Tool 3: memory_search
 # ===========================================================================
+
 
 @mcp.tool()
 def memory_search(query: str, mode: str = "hybrid", hops: int = 2) -> str:
@@ -332,7 +338,7 @@ def memory_search(query: str, mode: str = "hybrid", hops: int = 2) -> str:
                     seen_ids.add(r["id"])
 
         if not results:
-            return f"No results found for \"{query}\" (mode={mode})."
+            return f'No results found for "{query}" (mode={mode}).'
 
         # ----- Graph expansion: walk outward from each result -----
         # For each matched entity, find its neighbors up to `hops` away.
@@ -350,7 +356,8 @@ def memory_search(query: str, mode: str = "hybrid", hops: int = 2) -> str:
                        neighbor.entity_type AS type,
                        r[0].edge_type AS edge_type
                 LIMIT 10
-                """ % hops,
+                """
+                % hops,
                 parameters={"eid": entity_id},
             )
 
@@ -375,9 +382,7 @@ def memory_search(query: str, mode: str = "hybrid", hops: int = 2) -> str:
                 expanded_connections[entity_id] = neighbors
 
         # ----- Format output -----
-        parts = [
-            f"Found {len(results)} entities for \"{query}\" (mode={mode}, hops={hops})\n"
-        ]
+        parts = [f'Found {len(results)} entities for "{query}" (mode={mode}, hops={hops})\n']
 
         for result in results:
             entity_id = result["id"]

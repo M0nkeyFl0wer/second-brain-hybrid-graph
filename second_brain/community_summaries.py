@@ -23,6 +23,7 @@ Usage:
     communities = compute_community_summaries(g)
     results = search_communities(g, query_embedding, limit=5)
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,6 +42,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def compute_community_summaries(
     graph: Graph,
@@ -93,9 +95,7 @@ def compute_community_summaries(
         pass  # No existing projection to drop
 
     logger.info("Projecting Entity/RELATES_TO graph for Louvain...")
-    graph.conn.execute(
-        f"CALL PROJECT_GRAPH('{proj_name}', ['Entity'], ['RELATES_TO'])"
-    )
+    graph.conn.execute(f"CALL PROJECT_GRAPH('{proj_name}', ['Entity'], ['RELATES_TO'])")
 
     # ------------------------------------------------------------------
     # 2-4. Run Louvain, process communities, and ensure projected graph cleanup
@@ -110,13 +110,12 @@ def compute_community_summaries(
         )
 
         # Filter by minimum size
-        communities = [
-            c for c in raw_communities
-            if c["size"] >= min_community_size
-        ]
+        communities = [c for c in raw_communities if c["size"] >= min_community_size]
         logger.info(
             "Louvain found %d communities total, %d with size >= %d",
-            len(raw_communities), len(communities), min_community_size,
+            len(raw_communities),
+            len(communities),
+            min_community_size,
         )
 
         # 3. For each qualifying community, build summary and store
@@ -163,13 +162,15 @@ def compute_community_summaries(
                 },
             )
 
-            stored.append({
-                "id": node_id,
-                "community_id": comm_id,
-                "size": size,
-                "top_entities": top_entities_str,
-                "summary": summary,
-            })
+            stored.append(
+                {
+                    "id": node_id,
+                    "community_id": comm_id,
+                    "size": size,
+                    "top_entities": top_entities_str,
+                    "summary": summary,
+                }
+            )
             logger.debug("Stored community %s (size=%d): %s", node_id, size, top_entities_str)
     finally:
         # 4. Drop the projected graph (free session-scoped memory)
@@ -277,15 +278,12 @@ def get_community_members(graph: Graph, community_id: int) -> list[dict]:
     except Exception:
         pass
 
-    graph.conn.execute(
-        f"CALL PROJECT_GRAPH('{proj_name}', ['Entity'], ['RELATES_TO'])"
-    )
+    graph.conn.execute(f"CALL PROJECT_GRAPH('{proj_name}', ['Entity'], ['RELATES_TO'])")
 
     # Run Louvain and filter to the requested community
     try:
         raw = graph.query(
-            f"CALL louvain('{proj_name}') "
-            "RETURN louvain_id, collect(node.id) AS member_ids "
+            f"CALL louvain('{proj_name}') " "RETURN louvain_id, collect(node.id) AS member_ids "
         )
     finally:
         # Drop projection immediately -- we have the data we need
@@ -326,6 +324,7 @@ def get_community_members(graph: Graph, community_id: int) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _ensure_algo_extension(graph: Graph) -> None:
     """Load the algo extension if not already loaded."""
@@ -378,9 +377,7 @@ def _build_summary_text(top_entities: list[dict], community_size: int) -> str:
     essence of the community so that vector similarity matches broad queries
     to the right community.
     """
-    parts: list[str] = [
-        f"Community of {community_size} related concepts."
-    ]
+    parts: list[str] = [f"Community of {community_size} related concepts."]
 
     for ent in top_entities:
         label = ent.get("label", "")

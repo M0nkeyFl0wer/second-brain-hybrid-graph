@@ -70,6 +70,7 @@ def _load_gold(path: Path) -> tuple[list[list[str]], list[list[str]], dict[str, 
 def slug_baseline_assignment(items: list[str]) -> dict[str, str]:
     """Cluster each item by slugify(label) — the system's current identity rule."""
     from second_brain.ontology import slugify
+
     return {item: slugify(item) for item in items}
 
 
@@ -92,6 +93,7 @@ def _resolver_assignment(
     items: list[str], types: dict[str, str], embeddings: dict[str, list[float]] | None
 ) -> dict[str, str]:
     from second_brain.pipeline import EntityResolver
+
     entities = [{"label": i, "entity_type": types.get(i, "")} for i in items]
     result = EntityResolver(entities, embeddings=embeddings).resolve()
     asg: dict[str, str] = {}
@@ -104,11 +106,27 @@ def _resolver_assignment(
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--gold", default=str(_GOLD_PATH))
-    ap.add_argument("--pred", default=None, help="Resolver output JSON ({clusters:[{members:[...]}]}).")
-    ap.add_argument("--resolver", action="store_true",
-                    help="Score the built-in EntityResolver.")
-    ap.add_argument("--no-embeddings", action="store_true",
-                    help="With --resolver, disable the embedding tier (string/deterministic only).")
+    ap.add_argument(
+        "--pred", default=None, help="Resolver output JSON ({clusters:[{members:[...]}]})."
+    )
+    ap.add_argument("--resolver", action="store_true", help="Score the built-in EntityResolver.")
+    ap.add_argument(
+        "--no-embeddings",
+        action="store_true",
+        help="With --resolver, disable the embedding tier (string/deterministic only).",
+    )
+    ap.add_argument(
+        "--fail-under",
+        type=float,
+        default=None,
+        help="Exit non-zero if F1 is below this threshold.",
+    )
+    ap.add_argument(
+        "--max-violations",
+        type=int,
+        default=None,
+        help="Exit non-zero if merge violations exceed this count.",
+    )
     args = ap.parse_args(argv)
 
     coref_clusters, contrast_clusters, types = _load_gold(Path(args.gold))
@@ -146,6 +164,18 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  merge violations (must-not-merge pairs wrongly merged): {len(violations)}")
     for a, b in violations[:10]:
         print(f"      ✗ merged {a!r} + {b!r}")
+
+    failed = False
+    if args.fail_under is not None and f1 < args.fail_under:
+        print(f"  FAIL: F1 {f1:.3f} < --fail-under {args.fail_under:.3f}")
+        failed = True
+    if args.max_violations is not None and len(violations) > args.max_violations:
+        print(
+            f"  FAIL: merge violations {len(violations)} > --max-violations {args.max_violations}"
+        )
+        failed = True
+    if failed:
+        return 1
     return 0
 
 

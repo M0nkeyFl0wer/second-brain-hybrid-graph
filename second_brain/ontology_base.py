@@ -130,9 +130,7 @@ class Ontology:
             return candidate
         return None
 
-    def validate_edge(
-        self, src_type: str, etype: str, tgt_type: str
-    ) -> tuple[bool, str]:
+    def validate_edge(self, src_type: str, etype: str, tgt_type: str) -> tuple[bool, str]:
         """Ontology-level validation for an edge.
 
         Default: checks edge type membership + grade locality via
@@ -154,10 +152,7 @@ class Ontology:
         """LLM-facing type list for extraction prompts. Subclass to customize."""
         nodes = ", ".join(sorted(self.NODE_TYPES))
         edges = ", ".join(sorted(self.EDGE_TYPES))
-        return (
-            f"Allowed node types: {nodes}\n"
-            f"Allowed edge types: {edges}\n"
-        )
+        return f"Allowed node types: {nodes}\n" f"Allowed edge types: {edges}\n"
 
     @classmethod
     def from_markdown(cls, path: Path) -> "Ontology":
@@ -182,10 +177,7 @@ class Ontology:
         """
         if not t:
             return t
-        alias = (
-            self.EDGE_TYPE_ALIASES.get(t)
-            or self.EDGE_TYPE_ALIASES.get(t.upper())
-        )
+        alias = self.EDGE_TYPE_ALIASES.get(t) or self.EDGE_TYPE_ALIASES.get(t.upper())
         return alias or t
 
     @property
@@ -263,33 +255,25 @@ class Ontology:
         """
         ddl: list[str] = []
 
-        ent_cols = ", ".join(
-            f"{n} {t}" for n, (t, _) in self.entity_field_schema().items()
-        )
+        ent_cols = ", ".join(f"{n} {t}" for n, (t, _) in self.entity_field_schema().items())
         ddl.append(
             f"CREATE NODE TABLE IF NOT EXISTS {self.ENTITY_LABEL} "
             f"({ent_cols}, PRIMARY KEY ({self.ENTITY_PK}))"
         )
 
-        doc_cols = ", ".join(
-            f"{n} {t}" for n, (t, _) in self.document_field_schema().items()
-        )
+        doc_cols = ", ".join(f"{n} {t}" for n, (t, _) in self.document_field_schema().items())
         ddl.append(
             f"CREATE NODE TABLE IF NOT EXISTS {self.DOCUMENT_LABEL} "
             f"({doc_cols}, PRIMARY KEY ({self.DOCUMENT_PK}))"
         )
 
-        chk_cols = ", ".join(
-            f"{n} {t}" for n, (t, _) in self.chunk_field_schema().items()
-        )
+        chk_cols = ", ".join(f"{n} {t}" for n, (t, _) in self.chunk_field_schema().items())
         ddl.append(
             f"CREATE NODE TABLE IF NOT EXISTS {self.CHUNK_LABEL} "
             f"({chk_cols}, PRIMARY KEY ({self.CHUNK_PK}))"
         )
 
-        edge_cols = ", ".join(
-            f"{n} {t}" for n, (t, _) in self.edge_field_schema().items()
-        )
+        edge_cols = ", ".join(f"{n} {t}" for n, (t, _) in self.edge_field_schema().items())
         ddl.append(
             f"CREATE REL TABLE IF NOT EXISTS {self.EDGE_REL_TABLE} "
             f"(FROM {self.ENTITY_LABEL} TO {self.ENTITY_LABEL}, "

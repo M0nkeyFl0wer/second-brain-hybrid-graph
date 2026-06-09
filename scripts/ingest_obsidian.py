@@ -4,6 +4,7 @@ Ingest notes from an Obsidian vault into the knowledge graph.
 Parses wikilinks, frontmatter, tags. Runs three-phase extraction.
 Idempotent — only processes new or modified notes.
 """
+
 import sys
 import time
 import argparse
@@ -15,21 +16,48 @@ from second_brain.extract import Extractor
 from second_brain.embed import embed_text
 from second_brain.ontology import slugify
 from second_brain.obsidian import scan_vault
+from second_brain.pipeline.resolve import canonicalize_extracted_graph
 from second_brain import config
+
+
+def _entity_document_mentions(entities: list[dict]) -> list[dict]:
+    mentions = []
+    for entity in entities:
+        doc_ids = entity.get("doc_ids") or ([entity.get("doc_id")] if entity.get("doc_id") else [])
+        for doc_id in doc_ids:
+            mentions.append(
+                {
+                    "entity_id": entity["id"],
+                    "doc_id": doc_id,
+                    "confidence": entity.get("confidence", 0.8),
+                    "source_url": entity.get("source_url", ""),
+                    "provenance": entity.get("provenance", "document_mention"),
+                }
+            )
+    return mentions
 
 
 def main():
     parser = argparse.ArgumentParser(description="Ingest Obsidian vault")
-    parser.add_argument("--vault", "-v", default=config.VAULT_PATH,
-                        help="Path to Obsidian vault")
-    parser.add_argument("--force", "-f", action="store_true",
-                        help="Re-ingest all notes (ignore existing)")
-    parser.add_argument("--ontology", "-o", default=None,
-                        help="Path to a YAML ontology (default: built-in SecondBrainOntology)")
-    parser.add_argument("--workers", "-w", type=int, default=1,
-                        help="Parallel extraction workers. 1 (default) is right "
-                             "for local Ollama (it serializes on one GPU); use "
-                             "8-16 for a remote OpenAI-compatible backend.")
+    parser.add_argument("--vault", "-v", default=config.VAULT_PATH, help="Path to Obsidian vault")
+    parser.add_argument(
+        "--force", "-f", action="store_true", help="Re-ingest all notes (ignore existing)"
+    )
+    parser.add_argument(
+        "--ontology",
+        "-o",
+        default=None,
+        help="Path to a YAML ontology (default: built-in SecondBrainOntology)",
+    )
+    parser.add_argument(
+        "--workers",
+        "-w",
+        type=int,
+        default=1,
+        help="Parallel extraction workers. 1 (default) is right "
+        "for local Ollama (it serializes on one GPU); use "
+        "8-16 for a remote OpenAI-compatible backend.",
+    )
     args = parser.parse_args()
 
     if not args.vault:
@@ -45,10 +73,13 @@ def main():
         return
 
     from second_brain.ontology_yaml import load_ontology
+
     ontology = load_ontology(args.ontology)
     if args.ontology:
-        print(f"Ontology: {args.ontology} "
-              f"({len(ontology.NODE_TYPES)} node types, {len(ontology.EDGE_TYPES)} edge types)")
+        print(
+            f"Ontology: {args.ontology} "
+            f"({len(ontology.NODE_TYPES)} node types, {len(ontology.EDGE_TYPES)} edge types)"
+        )
     else:
         print("Ontology: built-in SecondBrainOntology (default)")
     graph = Graph(ontology=ontology)
@@ -83,11 +114,13 @@ def main():
         # Phase 2 on the main thread only (LadybugDB is single-writer).
         def _extract(note):
             return note, extractor.extract_from_text(
-                note["body"], source_url=note["path"], doc_id=note["doc_id"])
+                note["body"], source_url=note["path"], doc_id=note["doc_id"]
+            )
 
         workers = max(1, args.workers)
         if workers > 1:
             from concurrent.futures import ThreadPoolExecutor
+
             print(f"Extracting {len(notes)} notes with {workers} parallel workers...")
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 extracted = list(pool.map(_extract, notes))
@@ -104,8 +137,9 @@ def main():
             if result.get("_error"):
                 extract_failures += 1
                 print(f"  ⚠ extraction FAILED: {result['_error']}")
-            print(f"  Extracted: {len(result['entities'])} entities, "
-                  f"{len(result['edges'])} edges")
+            print(
+                f"  Extracted: {len(result['entities'])} entities, " f"{len(result['edges'])} edges"
+            )
 
             # Store wikilinks as ASSOCIATED_WITH edges between linked notes
             # (links are note-title → note-title, resolved by label match)
@@ -114,24 +148,29 @@ def main():
                 for link_target in note["wikilinks"]:
                     # Create a concept entity for the linked note if not yet extracted
                     link_id = f"wikilink_{__import__('hashlib').sha256(link_target.encode()).hexdigest()[:16]}"
-                    result["entities"].append({
-                        "id": link_id,
-                        "entity_type": "concept",
-                        "label": link_target,
-                        "description": f"Linked note: [[{link_target}]]",
-                        "confidence": 0.8,
-                        "source_url": note["path"],
-                        "provenance": "obsidian_wikilink",
-                    })
+                    result["entities"].append(
+                        {
+                            "id": link_id,
+                            "entity_type": "concept",
+                            "label": link_target,
+                            "description": f"Linked note: [[{link_target}]]",
+                            "confidence": 0.8,
+                            "source_url": note["path"],
+                            "doc_id": note["doc_id"],
+                            "provenance": "obsidian_wikilink",
+                        }
+                    )
                     # Edge from this note's doc to the linked concept
-                    result["edges"].append({
-                        "source_id": note["doc_id"],
-                        "target_id": link_id,
-                        "edge_type": "ASSOCIATED_WITH",
-                        "confidence": 0.9,
-                        "source_url": note["path"],
-                        "provenance": "obsidian_wikilink",
-                    })
+                    result["edges"].append(
+                        {
+                            "source_id": note["doc_id"],
+                            "target_id": link_id,
+                            "edge_type": "ASSOCIATED_WITH",
+                            "confidence": 0.9,
+                            "source_url": note["path"],
+                            "provenance": "obsidian_wikilink",
+                        }
+                    )
 
             # Add tags as entities
             for tag in note["tags"]:
@@ -142,12 +181,19 @@ def main():
                     "description": f"Tag: #{tag}",
                     "confidence": 0.8,
                     "source_url": note["path"],
+                    "doc_id": note["doc_id"],
                     "provenance": "obsidian_tag",
                 }
                 result["entities"].append(tag_entity)
 
             all_entities.extend(result["entities"])
             all_edges.extend(result["edges"])
+
+        # Resolve aliases before writing so tags/wikilinks/LLM labels converge
+        # onto one canonical entity ID in this ingest batch.
+        all_entities, all_edges, resolution = canonicalize_extracted_graph(all_entities, all_edges)
+        if resolution.merged_count:
+            print(f"Resolved entity aliases: {resolution.merged_count} labels folded.")
 
         # Deduplicate entities across notes — same ID from different notes
         # should keep the highest-confidence version
@@ -163,6 +209,10 @@ def main():
             print(f"\nBulk loading {len(all_entities)} entities (after dedup)...")
             loaded = graph.bulk_add_entities(all_entities)
             print(f"  Loaded: {loaded}")
+
+            mentions = _entity_document_mentions(all_entities)
+            mentioned = graph.bulk_add_mentions(mentions)
+            print(f"  Document mentions: {mentioned}")
 
             # Embed entity descriptions
             print("Computing entity embeddings...")
@@ -193,10 +243,14 @@ def main():
         # relationships. Surface it loudly so the operator re-runs rather
         # than shipping a hollow graph.
         if extract_failures and edge_count == 0:
-            print(f"⚠  INGEST DEGRADED — {extract_failures}/{len(notes)} extractions "
-                  f"failed and the graph has 0 edges.")
-            print(f"   The extraction backend (Ollama @ {getattr(extractor,'host','?')}) "
-                  f"likely timed out or was unreachable.")
+            print(
+                f"⚠  INGEST DEGRADED — {extract_failures}/{len(notes)} extractions "
+                f"failed and the graph has 0 edges."
+            )
+            print(
+                f"   The extraction backend (Ollama @ {getattr(extractor,'host','?')}) "
+                f"likely timed out or was unreachable."
+            )
             print(
                 "   Documents + entities were stored, but NO relationships were "
                 "extracted. Re-run when the backend is responsive."
@@ -204,8 +258,7 @@ def main():
         else:
             print(f"Ingestion complete in {elapsed:.1f}s.")
             if extract_failures:
-                print(f"  ⚠ {extract_failures}/{len(notes)} extractions failed "
-                      f"(partial graph)")
+                print(f"  ⚠ {extract_failures}/{len(notes)} extractions failed " f"(partial graph)")
         print(f"  Notes processed:     {len(notes)}")
         print(f"  Total entities:      {graph.entity_count()}")
         print(f"  Total edges:         {edge_count}")
@@ -216,8 +269,9 @@ def main():
         print("  Reflect:   python scripts/daily_briefing.py")
 
         # Ontology rejections (optional — not all ontology types track these)
-        rejections = (ontology.get_rejection_counts()
-                      if hasattr(ontology, "get_rejection_counts") else {})
+        rejections = (
+            ontology.get_rejection_counts() if hasattr(ontology, "get_rejection_counts") else {}
+        )
         if rejections:
             print("\nOntology rejections:")
             for type_name, count in list(rejections.items())[:10]:

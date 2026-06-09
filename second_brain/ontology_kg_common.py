@@ -22,6 +22,7 @@ Module-level constants (`NODE_TYPES`, `EDGE_TYPES`, `EDGE_DOMAIN_RANGE`,
 and any other importer of `slugify` / `validate_edge` (module-level
 functions kept there for backward compat).
 """
+
 from __future__ import annotations
 
 from itertools import product
@@ -45,9 +46,9 @@ _IMPLEMENTS_SRC = {"tool", "method"}
 
 _EDGE_DOMAIN_RANGE: dict[str, list[tuple[str, str]]] = {
     "PRACTICED_IN": list(product(_PRACTICE_SRC, _NODE_TYPES)),
-    "ASKED_ABOUT":  list(product({"question"}, _NODE_TYPES)),
-    "ANSWERS":      list(product(_NODE_TYPES, {"question"})),
-    "IMPLEMENTS":   list(product(_IMPLEMENTS_SRC, _NODE_TYPES)),
+    "ASKED_ABOUT": list(product({"question"}, _NODE_TYPES)),
+    "ANSWERS": list(product(_NODE_TYPES, {"question"})),
+    "IMPLEMENTS": list(product(_IMPLEMENTS_SRC, _NODE_TYPES)),
 }
 
 
@@ -94,16 +95,16 @@ class SecondBrainOntology(Ontology):
             else:
                 sources = sorted({s for s, _ in pairs})
                 targets = sorted({t for _, t in pairs})
-                edge_lines.append(
-                    f"    - {etype} (source: {sources} → target: {targets})"
-                )
-        return "\n".join([
-            "Edge types (all require verbatim evidence quote):",
-            *edge_lines,
-            "",
-            "Rules:",
-            "  - Every edge MUST have evidence (exact quote from text, min 10 chars)",
-            "  - Confidence: 0.9 deterministic / 0.7 NLP / 0.5 LLM",
-            "  - Use exact entity labels from text, don't invent names",
-            "  - Extract CONFLICTS_WITH and SUPPORTS when beliefs contrast/reinforce",
-        ])
+                edge_lines.append(f"    - {etype} (source: {sources} → target: {targets})")
+        return "\n".join(
+            [
+                "Edge types (all require verbatim evidence quote):",
+                *edge_lines,
+                "",
+                "Rules:",
+                "  - Every edge MUST have evidence (exact quote from text, min 10 chars)",
+                "  - Confidence: 0.9 deterministic / 0.7 NLP / 0.5 LLM",
+                "  - Use exact entity labels from text, don't invent names",
+                "  - Extract CONFLICTS_WITH and SUPPORTS when beliefs contrast/reinforce",
+            ]
+        )

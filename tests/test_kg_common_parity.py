@@ -15,9 +15,8 @@ The base ABC was vendored from kg-common into `second_brain.ontology_base`
 to drop the private dependency, so conformance is now checked against the
 vendored base (no external package required).
 """
-from __future__ import annotations
 
-import pytest
+from __future__ import annotations
 
 
 # ----------------------------------------------------------------------

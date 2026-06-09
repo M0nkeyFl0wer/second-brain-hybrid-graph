@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Validate ONTOLOGY.md syntax and check graph health against ontology."""
+
 import sys
 
 sys.path.insert(0, ".")
@@ -21,7 +22,7 @@ def main():
             missing_examples.append(name)
     if missing_examples:
         print(f"\n  Types missing exotypical examples: {', '.join(missing_examples)}")
-        print(f"  Tip: Add boundary examples to improve extraction accuracy")
+        print("  Tip: Add boundary examples to improve extraction accuracy")
 
     # Check graph health if it exists
     try:
@@ -37,8 +38,7 @@ def main():
             return
 
         # ICR: Instantiated Class Ratio
-        type_dist = graph.query(
-            "MATCH (e:Entity) RETURN e.entity_type AS t, count(e) AS c")
+        type_dist = graph.query("MATCH (e:Entity) RETURN e.entity_type AS t, count(e) AS c")
         populated = set(r["t"] for r in type_dist)
         declared = set(ontology.entity_type_names)
         icr = len(populated & declared) / len(declared) if declared else 0
@@ -66,11 +66,11 @@ def main():
 
         # IPR: Instantiated Property Ratio (edge types)
         edge_dist = graph.query(
-            "MATCH ()-[r:RELATES_TO]->() RETURN r.edge_type AS t, count(r) AS c")
+            "MATCH ()-[r:RELATES_TO]->() RETURN r.edge_type AS t, count(r) AS c"
+        )
         populated_edges = set(r["t"] for r in edge_dist)
         declared_edges = set(ontology.edge_type_names)
-        ipr = (len(populated_edges & declared_edges) / len(declared_edges)
-               if declared_edges else 0)
+        ipr = len(populated_edges & declared_edges) / len(declared_edges) if declared_edges else 0
 
         print(f"  IPR (edge coverage): {ipr:.2f}", end="")
         if ipr >= 0.8:
@@ -81,7 +81,7 @@ def main():
             print(" — critical")
 
         # Distribution details
-        print(f"\n  Type distribution:")
+        print("\n  Type distribution:")
         for r in sorted(type_dist, key=lambda r: -r["c"]):
             pct = r["c"] / total * 100
             bar = "█" * int(pct / 2)

@@ -3,6 +3,7 @@ Graph topology analysis. Finds structural gaps, contradictions,
 surprising connections, and community structure.
 No AI needed — just math on the graph structure.
 """
+
 import networkx as nx
 from dataclasses import dataclass, field
 
@@ -10,6 +11,7 @@ from dataclasses import dataclass, field
 @dataclass
 class TopologyReport:
     """Results of a topology analysis pass."""
+
     node_count: int = 0
     edge_count: int = 0
     component_count: int = 0
@@ -26,6 +28,7 @@ class TopologyReport:
 def build_networkx_graph(graph) -> nx.Graph:
     """Convert LadybugDB graph to NetworkX for analysis."""
     from .queries import QUERIES
+
     G = nx.Graph()
 
     entities = graph.query(QUERIES["all_entities_for_topology"])
@@ -59,6 +62,7 @@ def run_topology(graph) -> TopologyReport:
     # Community detection (Louvain)
     try:
         from networkx.algorithms.community import louvain_communities
+
         communities_list = louvain_communities(G, seed=42)
         for i, comm in enumerate(communities_list):
             for node in comm:
@@ -80,14 +84,16 @@ def run_topology(graph) -> TopologyReport:
         for node_id, score in sorted(bc.items(), key=lambda x: -x[1])[:20]:
             degree = G.degree(node_id)
             node_data = G.nodes[node_id]
-            report.top_betweenness.append({
-                "id": node_id,
-                "label": node_data.get("label", ""),
-                "type": node_data.get("type", ""),
-                "betweenness": round(score, 4),
-                "degree": degree,
-                "surprising": score > 0.05 and degree < 10,
-            })
+            report.top_betweenness.append(
+                {
+                    "id": node_id,
+                    "label": node_data.get("label", ""),
+                    "type": node_data.get("type", ""),
+                    "betweenness": round(score, 4),
+                    "degree": degree,
+                    "surprising": score > 0.05 and degree < 10,
+                }
+            )
 
     # Gap detection: community pairs with low cross-edges
     if report.community_count > 1:
@@ -100,9 +106,12 @@ def run_topology(graph) -> TopologyReport:
     if report.node_count < 10000:
         try:
             report.bridges = [
-                {"source": u, "target": v,
-                 "source_label": G.nodes[u].get("label", ""),
-                 "target_label": G.nodes[v].get("label", "")}
+                {
+                    "source": u,
+                    "target": v,
+                    "source_label": G.nodes[u].get("label", ""),
+                    "target_label": G.nodes[v].get("label", ""),
+                }
                 for u, v in nx.bridges(G)
             ]
         except nx.NetworkXError:
@@ -131,11 +140,10 @@ def _find_community_gaps(G: nx.Graph, communities: dict, num_communities: int) -
 
     # Find gaps: large communities with few cross-edges
     gaps = []
-    substantial = [c for c, size in comm_sizes.items()
-                   if size >= config.MIN_COMMUNITY_SIZE]
+    substantial = [c for c, size in comm_sizes.items() if size >= config.MIN_COMMUNITY_SIZE]
 
     for i, c1 in enumerate(substantial):
-        for c2 in substantial[i + 1:]:
+        for c2 in substantial[i + 1 :]:
             pair = (min(c1, c2), max(c1, c2))
             count = cross_edges.get(pair, 0)
 
@@ -151,17 +159,27 @@ def _find_community_gaps(G: nx.Graph, communities: dict, num_communities: int) -
                 c1_labels = [G.nodes[n].get("label", n) for n in c1_top]
                 c2_labels = [G.nodes[n].get("label", n) for n in c2_top]
 
-                gaps.append({
-                    "community_a": {"id": c1, "size": comm_sizes[c1], "top_entities": c1_labels},
-                    "community_b": {"id": c2, "size": comm_sizes[c2], "top_entities": c2_labels},
-                    "cross_edges": count,
-                    "priority": "HIGH" if count == 0 else "MEDIUM",
-                    "question": (
-                        f"How do {c1_labels[0]} and {c2_labels[0]} relate? "
-                        f"Your knowledge about [{', '.join(c1_labels)}] and "
-                        f"[{', '.join(c2_labels)}] is not yet connected."
-                    ),
-                })
+                gaps.append(
+                    {
+                        "community_a": {
+                            "id": c1,
+                            "size": comm_sizes[c1],
+                            "top_entities": c1_labels,
+                        },
+                        "community_b": {
+                            "id": c2,
+                            "size": comm_sizes[c2],
+                            "top_entities": c2_labels,
+                        },
+                        "cross_edges": count,
+                        "priority": "HIGH" if count == 0 else "MEDIUM",
+                        "question": (
+                            f"How do {c1_labels[0]} and {c2_labels[0]} relate? "
+                            f"Your knowledge about [{', '.join(c1_labels)}] and "
+                            f"[{', '.join(c2_labels)}] is not yet connected."
+                        ),
+                    }
+                )
 
     return sorted(gaps, key=lambda g: (g["priority"] == "HIGH", -g["cross_edges"]), reverse=True)
 
@@ -169,8 +187,8 @@ def _find_community_gaps(G: nx.Graph, communities: dict, num_communities: int) -
 def _find_contradictions(graph) -> list:
     """Find conflicting beliefs (CONFLICTS_WITH edges) in the graph."""
     from .queries import QUERIES
-    return graph.query(QUERIES["conflicting_beliefs"],
-                       parameters={"limit": 20})
+
+    return graph.query(QUERIES["conflicting_beliefs"], parameters={"limit": 20})
 
 
 def run_persistent_homology(G: nx.Graph, max_nodes: int = 500) -> dict:
@@ -217,8 +235,11 @@ def run_persistent_homology(G: nx.Graph, max_nodes: int = 500) -> dict:
         "h1_features": len(h1),
         "h1_persistent": len(h1_persistent),
         "h1_details": [
-            {"birth": round(float(b), 3), "death": round(float(d), 3),
-             "persistence": round(float(d - b), 3)}
+            {
+                "birth": round(float(b), 3),
+                "death": round(float(d), 3),
+                "persistence": round(float(d - b), 3),
+            }
             for b, d in sorted(h1_persistent, key=lambda x: -(x[1] - x[0]))[:10]
         ],
     }
@@ -264,21 +285,25 @@ def export_skeleton_json(graph, max_edges: int = 200) -> dict:
 
     nodes = []
     for node_id, data in S.nodes(data=True):
-        nodes.append({
-            "id": node_id,
-            "label": data.get("label", node_id),
-            "type": data.get("type", ""),
-            "degree": S.degree(node_id),
-        })
+        nodes.append(
+            {
+                "id": node_id,
+                "label": data.get("label", node_id),
+                "type": data.get("type", ""),
+                "degree": S.degree(node_id),
+            }
+        )
 
     edges = []
     for u, v, data in S.edges(data=True):
-        edges.append({
-            "source": u,
-            "target": v,
-            "type": data.get("type", ""),
-            "weight": data.get("weight", 1.0),
-        })
+        edges.append(
+            {
+                "source": u,
+                "target": v,
+                "type": data.get("type", ""),
+                "weight": data.get("weight", 1.0),
+            }
+        )
 
     return {
         "nodes": nodes,

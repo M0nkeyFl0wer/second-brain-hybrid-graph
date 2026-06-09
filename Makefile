@@ -15,15 +15,15 @@ smoke:
 	source .venv/bin/activate && bash tests/smoke.sh
 
 # Run all evaluations with threshold gates
-# - Entity Resolution: B-Cubed F1 >= 0.80
-# - Retrieval: Recall@5 >= threshold
+# - Entity Resolution: B-Cubed F1 >= 0.85 with zero merge violations
+# - Retrieval: Recall@5 >= 0.50 current-corpus regression floor
 # - Ontology health: Cat 8 drift < 10%
 eval:
 	@echo "=== Running Entity Resolution Evaluation ==="
-	source .venv/bin/activate && python -m eval.run_er_eval --resolver
+	source .venv/bin/activate && python -m eval.run_er_eval --resolver --fail-under 0.85 --max-violations 0
 	@echo ""
 	@echo "=== Running Retrieval Evaluation ==="
-	source .venv/bin/activate && python -m eval.retrieval_eval
+	source .venv/bin/activate && python -m eval.retrieval_eval --fail-under 0.50
 	@echo ""
 	@echo "=== Running Ontology Health Check (Cat 8) ==="
 	source .venv/bin/activate && python -m sme.cli cat8 --adapter ladybugdb --db data/graph.lbug --implied-ontology examples/good-dog-corpus/ontology.yaml

@@ -63,10 +63,44 @@ def scan_directory(path: Path) -> dict[str, int]:
     }
 
     keywords = {
-        "LEARNED_FROM": ["read", "book", "article", "course", "learned from", "studied", "course", "paper", "podcast", "video", "talk"],
-        "INSPIRED_BY": ["inspired by", "reminds me of", "this makes me think", "spark", "idea from", "originated from"],
-        "CONFLICTS_WITH": ["conflicts with", "contradicts", "opposite of", "disagrees", "vs", "versus", " tension"],
-        "PRACTICED_IN": ["i use", "i practice", "i apply", "in my workflow", "in my project", "implemented in"],
+        "LEARNED_FROM": [
+            "read",
+            "book",
+            "article",
+            "course",
+            "learned from",
+            "studied",
+            "course",
+            "paper",
+            "podcast",
+            "video",
+            "talk",
+        ],
+        "INSPIRED_BY": [
+            "inspired by",
+            "reminds me of",
+            "this makes me think",
+            "spark",
+            "idea from",
+            "originated from",
+        ],
+        "CONFLICTS_WITH": [
+            "conflicts with",
+            "contradicts",
+            "opposite of",
+            "disagrees",
+            "vs",
+            "versus",
+            " tension",
+        ],
+        "PRACTICED_IN": [
+            "i use",
+            "i practice",
+            "i apply",
+            "in my workflow",
+            "in my project",
+            "implemented in",
+        ],
         "IMPLEMENTS": ["implements", "tool for", "software for", "app for", "plugin", "extension"],
     }
 
@@ -93,7 +127,9 @@ def prompt_yes_no(question: str) -> bool:
         print("  Please enter 'y' or 'n'")
 
 
-def prompt_multi_select(options: list[str], descriptions: dict[str, str], defaults: list[str], max_select: int = 10) -> list[str]:
+def prompt_multi_select(
+    options: list[str], descriptions: dict[str, str], defaults: list[str], max_select: int = 10
+) -> list[str]:
     """Prompt user to select multiple options from a list."""
     print("\n  Available options (press number to toggle, Enter to confirm):\n")
     selected = set(defaults)
@@ -205,7 +241,9 @@ def run_onboarding(vault_path: Optional[Path], content_type: str) -> None:
     print(" Edge Type Selection")
     print("=" * 60)
     print("\n  Which relationships do you want to track?")
-    print("  Default options (recommended): LEARNED_FROM, INSPIRED_BY, PRACTICED_IN, CONFLICTS_WITH, IMPLEMENTS\n")
+    print(
+        "  Default options (recommended): LEARNED_FROM, INSPIRED_BY, PRACTICED_IN, CONFLICTS_WITH, IMPLEMENTS\n"
+    )
 
     edge_type_list = sorted(EDGE_TYPES)
     suggested_defaults = [et for et in DEFAULT_EDGE_TYPES if et in EDGE_TYPES]

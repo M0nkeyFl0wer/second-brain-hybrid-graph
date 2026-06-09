@@ -10,6 +10,7 @@ Usage:
     from second_brain.migrations import ensure_schema_version
     ensure_schema_version(conn)  # called during Graph.__init__
 """
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -32,17 +33,19 @@ def ensure_schema_version(conn) -> int:
     """)
 
     # Check current version
-    result = conn.execute(
-        "MATCH (m:_SchemaMeta {id: 'schema'}) RETURN m.version AS v")
+    result = conn.execute("MATCH (m:_SchemaMeta {id: 'schema'}) RETURN m.version AS v")
     rows = []
     while result.has_next():
         rows.append(result.get_next())
 
     if not rows:
         # Fresh database — set version to current
-        conn.execute("""
+        conn.execute(
+            """
             CREATE (m:_SchemaMeta {id: 'schema', version: $v})
-        """, parameters={"v": CURRENT_VERSION})
+        """,
+            parameters={"v": CURRENT_VERSION},
+        )
         logger.info("Schema initialized at version %d", CURRENT_VERSION)
         return CURRENT_VERSION
 
@@ -55,16 +58,18 @@ def ensure_schema_version(conn) -> int:
     for v in range(db_version, CURRENT_VERSION):
         migrate_fn = globals().get(f"_migrate_v{v}_to_v{v + 1}")
         if migrate_fn is None:
-            raise RuntimeError(
-                f"No migration function for v{v} → v{v + 1}")
+            raise RuntimeError(f"No migration function for v{v} → v{v + 1}")
         logger.info("Migrating schema v%d → v%d", v, v + 1)
         migrate_fn(conn)
 
     # Update stored version
-    conn.execute("""
+    conn.execute(
+        """
         MATCH (m:_SchemaMeta {id: 'schema'})
         SET m.version = $v
-    """, parameters={"v": CURRENT_VERSION})
+    """,
+        parameters={"v": CURRENT_VERSION},
+    )
 
     logger.info("Schema migrated to version %d", CURRENT_VERSION)
     return CURRENT_VERSION

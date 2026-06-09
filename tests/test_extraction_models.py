@@ -10,6 +10,7 @@ Covers:
   - extract_triplets_from_text still returns the legacy dict contract after
     routing through the model (urllib mocked; no live LLM)
 """
+
 import json
 from unittest.mock import patch
 
@@ -81,11 +82,17 @@ class TestExtractedEdge:
             ExtractedEdge(source="", target="b")
 
     def test_legacy_dict_keys(self):
-        x = ExtractedEdge(source="a", target="b", edge_type="LEARNED_FROM", evidence="q", confidence=0.5)
+        x = ExtractedEdge(
+            source="a", target="b", edge_type="LEARNED_FROM", evidence="q", confidence=0.5
+        )
         d = x.to_legacy_dict()
         assert d == {
-            "source": "a", "target": "b", "type": "LEARNED_FROM",
-            "evidence": "q", "confidence": 0.5, "extraction_tier": "llm",
+            "source": "a",
+            "target": "b",
+            "type": "LEARNED_FROM",
+            "evidence": "q",
+            "confidence": 0.5,
+            "extraction_tier": "llm",
         }
 
 
@@ -94,12 +101,12 @@ class TestExtractionResultFromRaw:
         raw = {
             "entities": [
                 {"label": "good", "type": "concept"},
-                {"label": "", "type": "concept"},          # invalid: empty name
-                {"type": "concept"},                         # invalid: no name
+                {"label": "", "type": "concept"},  # invalid: empty name
+                {"type": "concept"},  # invalid: no name
             ],
             "edges": [
                 {"source": "a", "target": "b", "type": "SUPPORTS", "evidence": "x"},
-                {"source": "a", "type": "SUPPORTS"},         # invalid: no target
+                {"source": "a", "type": "SUPPORTS"},  # invalid: no target
             ],
         }
         result = ExtractionResult.from_raw(raw, source_id="doc1")
@@ -114,8 +121,10 @@ class TestExtractionResultFromRaw:
         assert result.to_legacy_dict()["_error"] == "timeout"
 
     def test_legacy_roundtrip_shape(self):
-        raw = {"entities": [{"label": "x", "type": "concept"}],
-               "edges": [{"source": "x", "target": "y", "type": "PART_OF", "evidence": "ev"}]}
+        raw = {
+            "entities": [{"label": "x", "type": "concept"}],
+            "edges": [{"source": "x", "target": "y", "type": "PART_OF", "evidence": "ev"}],
+        }
         out = ExtractionResult.from_raw(raw).to_legacy_dict()
         assert set(out.keys()) == {"entities", "edges"}
         assert out["entities"][0]["label"] == "x"
@@ -133,19 +142,32 @@ class TestExtractParseBoundary:
         class _Resp:
             def __enter__(self_):
                 return self_
+
             def __exit__(self_, *a):
                 return False
+
             def read(self_):
                 return json.dumps({"response": payload_text}).encode()
+
         return lambda *a, **k: _Resp()
 
     def test_returns_validated_legacy_dict(self):
         from second_brain import extract
-        llm_json = json.dumps({
-            "entities": [{"label": "memory", "type": "concept"}],
-            "edges": [{"source": "memory", "target": "sleep", "type": "supports",
-                       "evidence": "sleep consolidates memory", "confidence": 9}],
-        })
+
+        llm_json = json.dumps(
+            {
+                "entities": [{"label": "memory", "type": "concept"}],
+                "edges": [
+                    {
+                        "source": "memory",
+                        "target": "sleep",
+                        "type": "supports",
+                        "evidence": "sleep consolidates memory",
+                        "confidence": 9,
+                    }
+                ],
+            }
+        )
         with patch.object(extract.urllib.request, "urlopen", self._fake_urlopen(llm_json)):
             out = extract.extract_triplets_from_text(
                 "Sleep consolidates memory over time, studies show.",
@@ -158,8 +180,9 @@ class TestExtractParseBoundary:
 
     def test_malformed_json_returns_empty_legacy_shape(self):
         from second_brain import extract
-        with patch.object(extract.urllib.request, "urlopen",
-                          self._fake_urlopen("not json at all")):
-            out = extract.extract_triplets_from_text("some text here that is long enough",
-                                                     edge_types=["SUPPORTS"])
+
+        with patch.object(extract.urllib.request, "urlopen", self._fake_urlopen("not json at all")):
+            out = extract.extract_triplets_from_text(
+                "some text here that is long enough", edge_types=["SUPPORTS"]
+            )
         assert out == {"entities": [], "edges": []}

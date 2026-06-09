@@ -8,6 +8,7 @@ data/
 
 # Analysis outputs
 analysis-report-*.json
+eval/results/
 
 # Verification harness runtime (kg_common.verify) + single-writer lockfiles
 .harness/

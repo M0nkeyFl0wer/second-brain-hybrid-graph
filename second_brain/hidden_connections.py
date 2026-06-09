@@ -21,6 +21,7 @@ Why cosine distance instead of similarity?
   space avoids a redundant 1-d conversion on every row. A threshold of 0.3
   in distance space is equivalent to 0.7 in similarity space.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -66,6 +67,7 @@ _ALL_EMBEDDED_ENTITIES = """
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def find_hidden_connections(
     graph: "Graph",
     top_n: int = 20,
@@ -103,8 +105,7 @@ def find_hidden_connections(
 
     # Build a lookup for labels/types so we can annotate results cheaply.
     entity_meta: dict[str, dict] = {
-        e["id"]: {"label": e["label"], "type": e["type"]}
-        for e in entities
+        e["id"]: {"label": e["label"], "type": e["type"]} for e in entities
     }
 
     # Step 2: For each entity, find nearest neighbors via HNSW.
@@ -148,15 +149,17 @@ def find_hidden_connections(
         src_meta = entity_meta.get(src_id, {"label": src_id, "type": ""})
         tgt_meta = entity_meta.get(tgt_id, {"label": tgt_id, "type": ""})
 
-        hidden.append({
-            "source_id": src_id,
-            "source_label": src_meta["label"],
-            "source_type": src_meta["type"],
-            "target_id": tgt_id,
-            "target_label": tgt_meta["label"],
-            "target_type": tgt_meta["type"],
-            "distance": round(dist, 4),
-        })
+        hidden.append(
+            {
+                "source_id": src_id,
+                "source_label": src_meta["label"],
+                "source_type": src_meta["type"],
+                "target_id": tgt_id,
+                "target_label": tgt_meta["label"],
+                "target_type": tgt_meta["type"],
+                "distance": round(dist, 4),
+            }
+        )
 
         if len(hidden) >= top_n:
             break
@@ -215,12 +218,14 @@ def find_hidden_for_entity(
         if _are_connected(graph, entity_id, nid):
             continue
 
-        hidden.append({
-            "target_id": nid,
-            "target_label": neighbor["label"],
-            "target_type": neighbor["type"],
-            "distance": round(dist, 4),
-        })
+        hidden.append(
+            {
+                "target_id": nid,
+                "target_label": neighbor["label"],
+                "target_type": neighbor["type"],
+                "distance": round(dist, 4),
+            }
+        )
 
     # Already sorted by distance (HNSW returns ordered results).
     return hidden
@@ -229,6 +234,7 @@ def find_hidden_for_entity(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _hnsw_neighbors(
     graph: "Graph",
@@ -297,15 +303,21 @@ def _are_connected(graph: "Graph", src_id: str, tgt_id: str) -> bool:
         return True
 
     # Check edge-node path: src→CONNECTS→EdgeNode→BINDS→tgt (either direction)
-    en_rows = graph.query("""
+    en_rows = graph.query(
+        """
         MATCH (a:Entity {id: $src})-[:CONNECTS]->(en:EdgeNode)-[:BINDS]->(b:Entity {id: $tgt})
         RETURN 1 AS connected LIMIT 1
-    """, parameters={"src": src_id, "tgt": tgt_id})
+    """,
+        parameters={"src": src_id, "tgt": tgt_id},
+    )
     if en_rows:
         return True
 
-    en_rows2 = graph.query("""
+    en_rows2 = graph.query(
+        """
         MATCH (a:Entity {id: $tgt})-[:CONNECTS]->(en:EdgeNode)-[:BINDS]->(b:Entity {id: $src})
         RETURN 1 AS connected LIMIT 1
-    """, parameters={"src": src_id, "tgt": tgt_id})
+    """,
+        parameters={"src": src_id, "tgt": tgt_id},
+    )
     return bool(en_rows2)

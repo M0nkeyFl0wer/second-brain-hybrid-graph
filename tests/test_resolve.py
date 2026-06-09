@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from second_brain.pipeline.resolve import (
+    canonicalize_extracted_graph,
     EntityResolver,
     initials,
     match_acronym,
@@ -39,8 +40,9 @@ class TestMatchers:
         assert match_normalized("X", "concept", "Y", "concept") is None
 
     def test_plural(self):
-        assert match_plural("American Pit Bull Terrier", "breed",
-                            "American Pit Bull Terriers", "breed")
+        assert match_plural(
+            "American Pit Bull Terrier", "breed", "American Pit Bull Terriers", "breed"
+        )
         # identical-normalized handled by the normalized matcher, not plural
         assert match_plural("pit bull", "concept", "pit_bull", "concept") is None
 
@@ -53,10 +55,10 @@ class TestMatchers:
         its initials spell 'cdc' — the expansion is an all-lowercase common
         phrase, not a proper name."""
         assert initials("canine dilated cardiomyopathy") == "cdc"  # the collision
-        assert match_acronym("CDC", "organization",
-                             "canine dilated cardiomyopathy", "concept") is None
-        assert match_acronym("cdc", "concept",
-                             "canine dilated cardiomyopathy", "concept") is None
+        assert (
+            match_acronym("CDC", "organization", "canine dilated cardiomyopathy", "concept") is None
+        )
+        assert match_acronym("cdc", "concept", "canine dilated cardiomyopathy", "concept") is None
 
     def test_surname_requires_person(self):
         assert match_surname("schenkel", "concept", "Rudolf Schenkel", "person")
@@ -68,24 +70,34 @@ class TestMatchers:
 class TestPhaseBMatchers:
     def test_acronym_subsequence(self):
         from second_brain.pipeline.resolve import match_acronym_subsequence
+
         # FDA is a subsequence of initials("U.S. Food and Drug Administration")="usfda"
-        assert match_acronym_subsequence("FDA", "organization",
-                                         "U.S. Food and Drug Administration", "organization")
+        assert match_acronym_subsequence(
+            "FDA", "organization", "U.S. Food and Drug Administration", "organization"
+        )
         # but NOT of "FDA Center for Veterinary Medicine (CVM)" (no 'd' after 'f')
-        assert match_acronym_subsequence("FDA", "organization",
-                                         "FDA Center for Veterinary Medicine (CVM)",
-                                         "organization") is None
+        assert (
+            match_acronym_subsequence(
+                "FDA", "organization", "FDA Center for Veterinary Medicine (CVM)", "organization"
+            )
+            is None
+        )
 
     def test_legal_suffix(self):
         from second_brain.pipeline.resolve import match_legal_suffix
-        assert match_legal_suffix("Hill's Pet Nutrition", "organization",
-                                  "Hill's Pet Nutrition Inc.", "organization")
+
+        assert match_legal_suffix(
+            "Hill's Pet Nutrition", "organization", "Hill's Pet Nutrition Inc.", "organization"
+        )
         # real-word difference is NOT a legal suffix
-        assert match_legal_suffix("Hill's", "organization",
-                                  "Hill's Pet Nutrition", "organization") is None
+        assert (
+            match_legal_suffix("Hill's", "organization", "Hill's Pet Nutrition", "organization")
+            is None
+        )
 
     def test_singularizer_keeps_latin_is_us(self):
         from second_brain.pipeline.resolve import _singularize
+
         assert _singularize("basis") == "basis"
         assert _singularize("canis") == "canis"
         assert _singularize("terriers") == "terrier"
@@ -101,9 +113,9 @@ class TestEmbeddingTier:
         ]
         embs = {
             "Alsatian": [1.0, 0.0, 0.0],
-            "German Shepherd": [0.99, 0.01, 0.0],   # near Alsatian, same type -> merge
-            "goldfish": [0.0, 1.0, 0.0],            # far -> stays separate
-            "Calgary": [0.98, 0.0, 0.0],            # near Alsatian but type location (distinct, specific)
+            "German Shepherd": [0.99, 0.01, 0.0],  # near Alsatian, same type -> merge
+            "goldfish": [0.0, 1.0, 0.0],  # far -> stays separate
+            "Calgary": [0.98, 0.0, 0.0],  # near Alsatian but type location (distinct, specific)
         }
         result = EntityResolver(ents, embeddings=embs, embedding_threshold=0.92).resolve()
         groups = {frozenset(c.members) for c in result.clusters}
@@ -151,6 +163,7 @@ class TestAgainstGold:
             clusters_to_assignment,
             count_merge_violations,
         )
+
         gold_data = self._gold()
         coref = [c["members"] for c in gold_data["clusters"]]
         contrast = [c["members"] for c in gold_data["contrast"]]
@@ -178,6 +191,7 @@ class TestAgainstGold:
             clusters_to_assignment,
             slug_baseline_assignment,
         )
+
         coref = [c["members"] for c in self._gold()["clusters"]]
         gold = clusters_to_assignment(coref)
         _, base_r, base_f1 = bcubed_pr_f1(gold, slug_baseline_assignment(list(gold)))
@@ -196,8 +210,149 @@ class TestAgainstGold:
         clears F1 0.85 with precision held and zero must-not-merge violations."""
         if self._embeddings() is None:
             import pytest
+
             pytest.skip("gold embedding sidecar not present")
         p, _, f1, violations = self._eval(use_embeddings=True)
         assert p == 1.0, "embedding tier must not cost precision at the 0.92 cliff"
         assert violations == [], f"must-not-merge pairs were merged: {violations}"
         assert f1 >= 0.85, f"expected >= 0.85 (got {f1:.3f})"
+
+
+class TestIngestCanonicalization:
+    def test_tags_and_extracted_entities_converge_to_canonical_id(self):
+        entities = [
+            {
+                "id": "fda",
+                "entity_type": "organization",
+                "label": "FDA",
+                "confidence": 0.9,
+                "description": "Food regulator",
+            },
+            {
+                "id": "tag_fda",
+                "entity_type": "concept",
+                "label": "FDA",
+                "confidence": 0.8,
+                "description": "Tag: #FDA",
+            },
+        ]
+        edges = [
+            {"source_id": "tag_fda", "target_id": "diet", "edge_type": "mentions"},
+            {"source_id": "diet", "target_id": "fda", "edge_type": "mentions"},
+        ]
+
+        canonical_entities, canonical_edges, resolution = canonicalize_extracted_graph(
+            entities, edges
+        )
+
+        assert resolution.merged_count == 0  # identical label, not counted as a resolver fold
+        assert [e["id"] for e in canonical_entities] == ["fda"]
+        assert canonical_entities[0]["entity_type"] == "organization"
+        assert canonical_edges[0]["source_id"] == "fda"
+        assert canonical_edges[1]["target_id"] == "fda"
+
+    def test_wikilink_hash_and_surface_label_converge(self):
+        entities = [
+            {
+                "id": "wikilink_deadbeef",
+                "entity_type": "concept",
+                "label": "German Shepherd",
+                "doc_id": "d1",
+            },
+            {
+                "id": "german_shepherd",
+                "entity_type": "breed",
+                "label": "German Shepherd",
+                "doc_id": "d2",
+            },
+        ]
+        edges = [{"source_id": "wikilink_deadbeef", "target_id": "akc", "edge_type": "mentions"}]
+
+        canonical_entities, canonical_edges, _ = canonicalize_extracted_graph(entities, edges)
+
+        assert [e["id"] for e in canonical_entities] == ["german_shepherd"]
+        assert canonical_entities[0]["entity_type"] == "breed"
+        assert canonical_entities[0]["doc_ids"] == ["d1", "d2"]
+        assert canonical_edges[0]["source_id"] == "german_shepherd"
+
+    def test_edges_that_collapse_to_self_loops_are_dropped(self):
+        entities = [
+            {"id": "akc", "entity_type": "organization", "label": "AKC"},
+            {
+                "id": "american_kennel_club",
+                "entity_type": "organization",
+                "label": "American Kennel Club",
+            },
+        ]
+        edges = [
+            {
+                "source_id": "akc",
+                "target_id": "american_kennel_club",
+                "edge_type": "alias_of",
+            }
+        ]
+
+        canonical_entities, canonical_edges, resolution = canonicalize_extracted_graph(
+            entities, edges
+        )
+
+        assert resolution.merged_count == 1
+        assert [e["id"] for e in canonical_entities] == ["american_kennel_club"]
+        assert canonical_edges == []
+
+    def test_unlinked_tag_only_entities_are_pruned(self):
+        entities = [
+            {
+                "id": "tag_municipal_policy",
+                "entity_type": "concept",
+                "label": "municipal_policy",
+                "provenance": "obsidian_tag",
+            }
+        ]
+
+        canonical_entities, canonical_edges, _ = canonicalize_extracted_graph(entities, [])
+
+        assert canonical_entities == []
+        assert canonical_edges == []
+
+    def test_unlinked_bare_year_events_are_pruned(self):
+        entities = [{"id": "1999", "entity_type": "event", "label": "1999"}]
+
+        canonical_entities, _, _ = canonicalize_extracted_graph(entities, [])
+
+        assert canonical_entities == []
+
+    def test_connected_bare_year_events_are_kept(self):
+        entities = [
+            {"id": "1999", "entity_type": "event", "label": "1999"},
+            {"id": "alpha_status", "entity_type": "concept", "label": "alpha status"},
+        ]
+        edges = [{"source_id": "1999", "target_id": "alpha_status", "edge_type": "mentions"}]
+
+        canonical_entities, canonical_edges, _ = canonicalize_extracted_graph(entities, edges)
+
+        assert {e["id"] for e in canonical_entities} == {"1999", "alpha_status"}
+        assert canonical_edges == edges
+
+    def test_unlinked_url_path_and_generated_slug_labels_are_pruned(self):
+        entities = [
+            {
+                "id": "https_www_fda_gov_report",
+                "entity_type": "location",
+                "label": "https://www.fda.gov/report",
+            },
+            {
+                "id": "vault_municipal_policy_montreal_md",
+                "entity_type": "publication",
+                "label": "vault/municipal_policy/montreal.md",
+            },
+            {
+                "id": "concept_dominance_theory",
+                "entity_type": "concept",
+                "label": "concept_dominance_theory",
+            },
+        ]
+
+        canonical_entities, _, _ = canonicalize_extracted_graph(entities, [])
+
+        assert canonical_entities == []

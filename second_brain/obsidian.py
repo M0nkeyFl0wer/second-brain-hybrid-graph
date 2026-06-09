@@ -2,6 +2,7 @@
 Obsidian vault reader. Parses markdown notes, extracts wikilinks,
 frontmatter, and tags. Prepares notes for the extraction pipeline.
 """
+
 import re
 import hashlib
 from pathlib import Path
@@ -21,28 +22,27 @@ def scan_vault(vault_path: str = "") -> list[dict]:
     notes = []
     for md_file in sorted(vault.rglob("*.md")):
         # Skip ignored directories
-        if any(part in config.VAULT_IGNORE_DIRS
-               for part in md_file.relative_to(vault).parts):
+        if any(part in config.VAULT_IGNORE_DIRS for part in md_file.relative_to(vault).parts):
             continue
 
         text = md_file.read_text(errors="replace")
         frontmatter, body = parse_frontmatter(text)
 
-        doc_id = hashlib.sha256(
-            str(md_file.relative_to(vault)).encode()
-        ).hexdigest()[:16]
+        doc_id = hashlib.sha256(str(md_file.relative_to(vault)).encode()).hexdigest()[:16]
 
-        notes.append({
-            "doc_id": doc_id,
-            "path": str(md_file),
-            "relative_path": str(md_file.relative_to(vault)),
-            "title": frontmatter.get("title", md_file.stem),
-            "body": body,
-            "full_text": text,
-            "frontmatter": frontmatter,
-            "tags": extract_tags(text, frontmatter),
-            "wikilinks": extract_wikilinks(body),
-        })
+        notes.append(
+            {
+                "doc_id": doc_id,
+                "path": str(md_file),
+                "relative_path": str(md_file.relative_to(vault)),
+                "title": frontmatter.get("title", md_file.stem),
+                "body": body,
+                "full_text": text,
+                "frontmatter": frontmatter,
+                "tags": extract_tags(text, frontmatter),
+                "wikilinks": extract_wikilinks(body),
+            }
+        )
 
     return notes
 
@@ -60,7 +60,7 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
         return {}, text
 
     yaml_block = text[3:end].strip()
-    body = text[end + 3:].strip()
+    body = text[end + 3 :].strip()
 
     # Simple YAML parser (no PyYAML dependency)
     frontmatter = {}
@@ -71,8 +71,9 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
             value = value.strip().strip('"').strip("'")
             if value.startswith("[") and value.endswith("]"):
                 # Simple list parsing: [tag1, tag2]
-                value = [v.strip().strip('"').strip("'")
-                         for v in value[1:-1].split(",") if v.strip()]
+                value = [
+                    v.strip().strip('"').strip("'") for v in value[1:-1].split(",") if v.strip()
+                ]
             frontmatter[key] = value
 
     return frontmatter, body
@@ -81,7 +82,7 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
 def extract_wikilinks(text: str) -> list[str]:
     """Extract [[wikilinks]] from text. Returns list of linked note names."""
     # Match [[link]] and [[link|display text]]
-    pattern = r'\[\[([^\]|]+)(?:\|[^\]]+)?\]\]'
+    pattern = r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]"
     return list(set(re.findall(pattern, text)))
 
 
@@ -97,14 +98,13 @@ def extract_tags(text: str, frontmatter: dict) -> list[str]:
         tags.update(t.strip().lstrip("#") for t in fm_tags if t.strip())
 
     # Inline #tags (not inside code blocks or URLs)
-    inline = re.findall(r'(?<!\S)#([a-zA-Z][a-zA-Z0-9_/-]*)', text)
+    inline = re.findall(r"(?<!\S)#([a-zA-Z][a-zA-Z0-9_/-]*)", text)
     tags.update(inline)
 
     return sorted(tags)
 
 
-def chunk_text(text: str, chunk_size: int = 1000,
-               overlap: int = 200) -> list[str]:
+def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[str]:
     """Split text into overlapping chunks for embedding."""
     if not text.strip():
         return []

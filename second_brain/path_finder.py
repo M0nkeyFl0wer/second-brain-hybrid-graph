@@ -44,7 +44,8 @@ class PathFinder:
         Returns list of path segments: [{source, edge, target}, ...]
         Empty list if no path exists.
         """
-        results = self.reader.query(f"""
+        results = self.reader.query(
+            f"""
             MATCH path = (s:entity {{id: $source}})-[*1..{max_hops}]-(t:entity {{id: $target}})
             WITH path, length(path) as hops
             ORDER BY hops
@@ -54,7 +55,9 @@ class PathFinder:
             WITH n.id as entity_id, n.label as label, type(r) as edge_type,
                  startNode(r).id as src, endNode(r).id as tgt, r.evidence as evidence
             RETURN entity_id, label, edge_type, src, tgt, evidence
-        """, {"source": source_id, "target": target_id})
+        """,
+            {"source": source_id, "target": target_id},
+        )
 
         return self._format_path(results)
 
@@ -79,7 +82,8 @@ class PathFinder:
         else:
             params = {"id": entity_id}
 
-        results = self.reader.query(f"""
+        results = self.reader.query(
+            f"""
             MATCH (center:entity {{id: $id}})
             MATCH path = (center)-[*1..{hops}]-(neighbor:entity)
             WHERE center <> neighbor
@@ -92,7 +96,9 @@ class PathFinder:
                    neighbor.entity_type as entity_type, min(dist) as distance,
                    edges
             ORDER BY distance, label
-        """, params)
+        """,
+            params,
+        )
 
         return results
 
@@ -112,7 +118,8 @@ class PathFinder:
             }
         """
         # Pass 1: find paths
-        candidates = self.reader.query("""
+        candidates = self.reader.query(
+            """
             MATCH path = (s:entity {id: $source})-[*1..3]-(t:entity {id: $target})
             WITH path, relationships(path) as rels
             UNWIND rels as r
@@ -120,7 +127,9 @@ class PathFinder:
                    collect({edge_type: type(r), evidence: r.evidence,
                            src_id: startNode(r).id, tgt_id: endNode(r).id}) as edges
             LIMIT 10
-        """, {"source": source_id, "target": target_id})
+        """,
+            {"source": source_id, "target": target_id},
+        )
 
         # Pass 2: check each edge
         verified_edges = []
@@ -131,19 +140,23 @@ class PathFinder:
             for edge in candidate.get("edges", []):
                 # Check evidence quality
                 if len(edge.get("evidence", "")) < 10:
-                    contradictions.append({
-                        "edge": edge,
-                        "reason": "evidence too short",
-                    })
+                    contradictions.append(
+                        {
+                            "edge": edge,
+                            "reason": "evidence too short",
+                        }
+                    )
                 else:
                     verified_edges.append(edge)
                     if edge.get("edge_type") == "SUPPORTS":
                         supports.append(edge)
                     elif edge.get("edge_type") == "CONFLICTS_WITH":
-                        contradictions.append({
-                            "edge": edge,
-                            "reason": "explicit contradiction",
-                        })
+                        contradictions.append(
+                            {
+                                "edge": edge,
+                                "reason": "explicit contradiction",
+                            }
+                        )
 
         return {
             "paths": candidates,
@@ -175,24 +188,29 @@ class PathFinder:
         # Check for missing edges between top-degree nodes
         gaps = []
         for i, a in enumerate(high_degree):
-            for b in high_degree[i + 1:]:
+            for b in high_degree[i + 1 :]:
                 # Check if edge exists
-                existing = self.reader.query("""
+                existing = self.reader.query(
+                    """
                     MATCH (a:entity {id: $a_id})-[r]->(b:entity {id: $b_id})
                     RETURN r.edge_type as edge_type
                     LIMIT 1
-                """, {"a_id": a["entity_id"], "b_id": b["entity_id"]})
+                """,
+                    {"a_id": a["entity_id"], "b_id": b["entity_id"]},
+                )
 
                 if not existing:
-                    gaps.append({
-                        "source": a["entity_id"],
-                        "target": b["entity_id"],
-                        "source_label": a["label"],
-                        "target_label": b["label"],
-                        "source_degree": a["degree"],
-                        "target_degree": b["degree"],
-                        "gap_score": a["degree"] + b["degree"],
-                    })
+                    gaps.append(
+                        {
+                            "source": a["entity_id"],
+                            "target": b["entity_id"],
+                            "source_label": a["label"],
+                            "target_label": b["label"],
+                            "source_degree": a["degree"],
+                            "target_degree": b["degree"],
+                            "gap_score": a["degree"] + b["degree"],
+                        }
+                    )
 
         gaps.sort(key=lambda x: x["gap_score"], reverse=True)
         return gaps[:limit]
@@ -204,14 +222,16 @@ class PathFinder:
 
         path = []
         for row in results:
-            path.append({
-                "entity_id": row.get("entity_id"),
-                "label": row.get("label"),
-                "edge_type": row.get("edge_type"),
-                "evidence": row.get("evidence"),
-                "src": row.get("src"),
-                "tgt": row.get("tgt"),
-            })
+            path.append(
+                {
+                    "entity_id": row.get("entity_id"),
+                    "label": row.get("label"),
+                    "edge_type": row.get("edge_type"),
+                    "evidence": row.get("evidence"),
+                    "src": row.get("src"),
+                    "tgt": row.get("tgt"),
+                }
+            )
         return path
 
     def close(self) -> None:

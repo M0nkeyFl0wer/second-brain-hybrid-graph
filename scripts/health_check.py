@@ -67,17 +67,14 @@ def check_graph():
         # exists(path) so we do it in Python.
         connected = set()
         for r in g.query(
-            "MATCH (a:Entity)-[e:RELATES_TO]->(b:Entity) "
-            "RETURN a.id AS src, b.id AS tgt"
+            "MATCH (a:Entity)-[e:RELATES_TO]->(b:Entity) " "RETURN a.id AS src, b.id AS tgt"
         ):
             connected.add(r["src"])
             connected.add(r["tgt"])
         orphans = entity_count - len(connected)
 
         connected_pct = (
-            ((entity_count - orphans) / entity_count * 100)
-            if entity_count > 0
-            else 100.0
+            ((entity_count - orphans) / entity_count * 100) if entity_count > 0 else 100.0
         )
         g.close()
 

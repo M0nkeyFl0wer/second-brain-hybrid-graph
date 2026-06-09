@@ -26,6 +26,7 @@ dependencies = [
     "pandas>=2.0.0",
     "spacy>=3.7.0",
     "networkx>=3.2",
+    "duckdb>=0.10.0",
     "ollama>=0.3.0",
     "kg-common>=0.0.1",
     "pydantic>=2.0",

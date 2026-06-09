@@ -32,43 +32,47 @@ Confidence scoring: 0.9 deterministic / 0.7 NLP / 0.5 LLM
 import re
 from typing import Optional
 
-NODE_TYPES = frozenset([
-    "concept",
-    "person",
-    "source",
-    "project",
-    "insight",
-    "question",
-    "practice",
-    "place",
-    "method",
-    "tool",
-])
+NODE_TYPES = frozenset(
+    [
+        "concept",
+        "person",
+        "source",
+        "project",
+        "insight",
+        "question",
+        "practice",
+        "place",
+        "method",
+        "tool",
+    ]
+)
 
-EDGE_TYPES = frozenset([
-    "LEARNED_FROM",
-    "INSPIRED_BY",
-    "CONFLICTS_WITH",
-    "SUPPORTS",
-    "PART_OF",
-    "PRACTICED_IN",
-    "ASKED_ABOUT",
-    "ANSWERS",
-    "IMPLEMENTS",
-    "REQUIRES",
-])
+EDGE_TYPES = frozenset(
+    [
+        "LEARNED_FROM",
+        "INSPIRED_BY",
+        "CONFLICTS_WITH",
+        "SUPPORTS",
+        "PART_OF",
+        "PRACTICED_IN",
+        "ASKED_ABOUT",
+        "ANSWERS",
+        "IMPLEMENTS",
+        "REQUIRES",
+    ]
+)
 
 EDGE_DOMAIN_RANGE = {
-    "LEARNED_FROM":    (NODE_TYPES, NODE_TYPES),
-    "INSPIRED_BY":     (NODE_TYPES, NODE_TYPES),
-    "CONFLICTS_WITH":  (NODE_TYPES, NODE_TYPES),
-    "SUPPORTS":        (NODE_TYPES, NODE_TYPES),
-    "PART_OF":         (NODE_TYPES, NODE_TYPES),
-    "PRACTICED_IN":    ({"practice", "method", "tool"}, NODE_TYPES),
-    "ASKED_ABOUT":     ({"question"}, NODE_TYPES),
-    "ANSWERS":         (NODE_TYPES, {"question"}),
-    "IMPLEMENTS":      ({"tool", "method"}, NODE_TYPES),
-    "REQUIRES":        (NODE_TYPES, NODE_TYPES),
+    "LEARNED_FROM": (NODE_TYPES, NODE_TYPES),
+    "INSPIRED_BY": (NODE_TYPES, NODE_TYPES),
+    "CONFLICTS_WITH": (NODE_TYPES, NODE_TYPES),
+    "SUPPORTS": (NODE_TYPES, NODE_TYPES),
+    "PART_OF": (NODE_TYPES, NODE_TYPES),
+    "PRACTICED_IN": ({"practice", "method", "tool"}, NODE_TYPES),
+    "ASKED_ABOUT": ({"question"}, NODE_TYPES),
+    "ANSWERS": (NODE_TYPES, {"question"}),
+    "IMPLEMENTS": ({"tool", "method"}, NODE_TYPES),
+    "REQUIRES": (NODE_TYPES, NODE_TYPES),
 }
 
 TYPE_ALIASES = {
@@ -166,11 +170,11 @@ def slugify(label: str) -> str:
         return "unknown"
     slug = label.lower().strip()
     # Normalize hyphens and underscores to single underscores
-    slug = re.sub(r'[-_]+', '_', slug)
+    slug = re.sub(r"[-_]+", "_", slug)
     # Replace non-alphanumeric with underscores
-    slug = re.sub(r'[^a-z0-9]+', '_', slug)
-    slug = re.sub(r'_+', '_', slug)
-    slug = slug.strip('_')
+    slug = re.sub(r"[^a-z0-9]+", "_", slug)
+    slug = re.sub(r"_+", "_", slug)
+    slug = slug.strip("_")
     return slug[:128]
 
 
@@ -185,16 +189,18 @@ def extraction_prompt_fragment() -> str:
         domain, range_ = EDGE_DOMAIN_RANGE.get(etype, (NODE_TYPES, NODE_TYPES))
         edge_lines.append(f"    - {etype} (source: {domain} → target: {range_})")
 
-    return "\n".join([
-        "Edge types (all require verbatim evidence quote):",
-        *edge_lines,
-        "",
-        "Rules:",
-        "  - Every edge MUST have evidence (exact quote from text, min 10 chars)",
-        "  - Confidence: 0.9 deterministic / 0.7 NLP / 0.5 LLM",
-        "  - Use exact entity labels from text, don't invent names",
-        "  - Extract CONFLICTS_WITH and SUPPORTS when beliefs contrast/reinforce",
-    ])
+    return "\n".join(
+        [
+            "Edge types (all require verbatim evidence quote):",
+            *edge_lines,
+            "",
+            "Rules:",
+            "  - Every edge MUST have evidence (exact quote from text, min 10 chars)",
+            "  - Confidence: 0.9 deterministic / 0.7 NLP / 0.5 LLM",
+            "  - Use exact entity labels from text, don't invent names",
+            "  - Extract CONFLICTS_WITH and SUPPORTS when beliefs contrast/reinforce",
+        ]
+    )
 
 
 def node_type_prompt_fragment() -> str:
@@ -230,5 +236,6 @@ def node_type_prompt_fragment() -> str:
 def __getattr__(name: str):
     if name in ("Ontology", "SecondBrainOntology"):
         from second_brain.ontology_kg_common import SecondBrainOntology
+
         return SecondBrainOntology
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -6,6 +6,7 @@ LadybugDB is a KuzuDB fork — same Cypher dialect, same embedded architecture.
 Bulk ingestion uses COPY FROM Parquet (25x faster than iterative MERGE).
 Vector search uses native FLOAT[768] columns + array_cosine_similarity.
 """
+
 import logging
 import time
 import tempfile
@@ -43,8 +44,7 @@ class Graph(GraphWriter):
     semantics and dual-import stay identical to the base).
     """
 
-    def __init__(self, graph_dir: Path = None, ontology: Ontology = None,
-                 read_only: bool = False):
+    def __init__(self, graph_dir: Path = None, ontology: Ontology = None, read_only: bool = False):
         # --- Public-API attributes (unchanged contract used across the repo) ---
         self.graph_dir = Path(graph_dir) if graph_dir else config.GRAPH_DIR
         self.ontology = ontology or Ontology()
@@ -90,6 +90,7 @@ class Graph(GraphWriter):
             self._conn = self.conn
             self._ensure_schema()
             from .migrations import ensure_schema_version
+
             ensure_schema_version(self.conn)
         except Exception:
             _release_writer_lock(self._lockfile)
@@ -232,68 +233,109 @@ class Graph(GraphWriter):
     # Incremental writes (single entity/edge at a time)
     # =========================================================================
 
-    def add_edge_node(self, edge_node_id: str, semantic_type: str,
-                      label: str = "", weight: float = 1.0,
-                      confidence: float = 0.5, provenance: str = "unknown",
-                      participants: list[str] = None) -> bool:
+    def add_edge_node(
+        self,
+        edge_node_id: str,
+        semantic_type: str,
+        label: str = "",
+        weight: float = 1.0,
+        confidence: float = 0.5,
+        provenance: str = "unknown",
+        participants: list[str] = None,
+    ) -> bool:
         """
         Create a Semantic Spacetime edge-node and link it to participants.
         Supports hypergraphs: one edge-node can connect 3+ entities.
         """
         now = int(time.time())
-        self.conn.execute("""
+        self.conn.execute(
+            """
             MERGE (en:EdgeNode {id: $eid})
             ON CREATE SET en.semantic_type = $stype, en.label = $elabel,
                 en.weight = $ew, en.confidence = $econf,
                 en.provenance = $eprov, en.created_at = $enow
-        """, parameters={
-            "eid": edge_node_id, "stype": semantic_type, "elabel": label,
-            "ew": weight, "econf": confidence,
-            "eprov": provenance, "enow": now,
-        })
+        """,
+            parameters={
+                "eid": edge_node_id,
+                "stype": semantic_type,
+                "elabel": label,
+                "ew": weight,
+                "econf": confidence,
+                "eprov": provenance,
+                "enow": now,
+            },
+        )
 
         if participants:
             for i, entity_id in enumerate(participants):
                 if i == 0:
                     # First participant: CONNECTS (source → edge-node)
-                    self.conn.execute("""
+                    self.conn.execute(
+                        """
                         MATCH (e:Entity {id: $src}), (en:EdgeNode {id: $enid})
                         MERGE (e)-[:CONNECTS]->(en)
-                    """, parameters={"src": entity_id, "enid": edge_node_id})
+                    """,
+                        parameters={"src": entity_id, "enid": edge_node_id},
+                    )
                 else:
                     # Remaining participants: BINDS (edge-node → target)
-                    self.conn.execute("""
+                    self.conn.execute(
+                        """
                         MATCH (en:EdgeNode {id: $enid}), (e:Entity {id: $tgt})
                         MERGE (en)-[:BINDS]->(e)
-                    """, parameters={"enid": edge_node_id, "tgt": entity_id})
+                    """,
+                        parameters={"enid": edge_node_id, "tgt": entity_id},
+                    )
         return True
 
-    def add_entity(self, entity_id: str, entity_type: str, label: str,
-                   description: str = "", confidence: float = 0.5,
-                   source_url: str = "", provenance: str = "unknown") -> bool:
+    def add_entity(
+        self,
+        entity_id: str,
+        entity_type: str,
+        label: str,
+        description: str = "",
+        confidence: float = 0.5,
+        source_url: str = "",
+        provenance: str = "unknown",
+    ) -> bool:
         """Add an entity to the graph. Validates against ontology first."""
         if not self.ontology.validate_entity_type(entity_type):
             return False
 
         now = int(time.time())
-        self.conn.execute("""
+        self.conn.execute(
+            """
             MERGE (e:Entity {id: $eid})
             ON CREATE SET e.entity_type = $etype, e.label = $elabel,
                 e.description = $edesc, e.confidence = $econf,
                 e.source_url = $eurl, e.provenance = $eprov,
                 e.created_at = $enow, e.updated_at = $enow
             ON MATCH SET e.updated_at = $enow
-        """, parameters={
-            "eid": entity_id, "etype": entity_type, "elabel": label,
-            "edesc": description, "econf": confidence,
-            "eurl": source_url, "eprov": provenance, "enow": now,
-        })
+        """,
+            parameters={
+                "eid": entity_id,
+                "etype": entity_type,
+                "elabel": label,
+                "edesc": description,
+                "econf": confidence,
+                "eurl": source_url,
+                "eprov": provenance,
+                "enow": now,
+            },
+        )
         return True
 
-    def add_edge(self, source_id: str, target_id: str, edge_type: str,
-                 weight: float = 1.0, confidence: float = 0.5,
-                 evidence: str = "", source_url: str = "",
-                 provenance: str = "unknown") -> bool:
+    def add_edge(
+        self,
+        source_id: str,
+        target_id: str,
+        edge_type: str,
+        weight: float = 1.0,
+        confidence: float = 0.5,
+        evidence: str = "",
+        source_url: str = "",
+        provenance: str = "unknown",
+    ) -> bool:
         """Add a typed edge between two entities.
 
         `evidence` is the verbatim source quote justifying the edge — the
@@ -315,35 +357,55 @@ class Graph(GraphWriter):
         if source_id not in tmap or target_id not in tmap:
             return False
         st, tt = tmap.get(source_id), tmap.get(target_id)
-        if st is not None and tt is not None and not self.ontology.validate_grade(edge_type, st, tt):
+        if (
+            st is not None
+            and tt is not None
+            and not self.ontology.validate_grade(edge_type, st, tt)
+        ):
             from .models import validation as v
-            self.last_violations.append(v.grade_violation(
-                v.edge_key(source_id, edge_type, target_id), edge_type, st, tt))
+
+            self.last_violations.append(
+                v.grade_violation(v.edge_key(source_id, edge_type, target_id), edge_type, st, tt)
+            )
             return False
 
-        self.conn.execute("""
+        self.conn.execute(
+            """
             MATCH (a:Entity {id: $src}), (b:Entity {id: $tgt})
             MERGE (a)-[r:RELATES_TO {edge_type: $etype}]->(b)
             ON CREATE SET r.weight = $w, r.confidence = $conf,
                 r.evidence = $ev, r.source_url = $url, r.provenance = $prov,
                 r.created_at = $now
-        """, parameters={
-            "src": source_id, "tgt": target_id, "etype": edge_type,
-            "w": weight, "conf": confidence, "ev": evidence,
-            "url": source_url, "prov": provenance, "now": int(time.time()),
-        })
+        """,
+            parameters={
+                "src": source_id,
+                "tgt": target_id,
+                "etype": edge_type,
+                "w": weight,
+                "conf": confidence,
+                "ev": evidence,
+                "url": source_url,
+                "prov": provenance,
+                "now": int(time.time()),
+            },
+        )
         return True
 
     def add_document(self, doc_id: str, path: str, title: str = "") -> None:
         """Register a source document."""
-        self.conn.execute("""
+        self.conn.execute(
+            """
             MERGE (d:Document {id: $id})
             ON CREATE SET d.path = $path, d.title = $title,
                 d.ingested_at = $now
-        """, parameters={
-            "id": doc_id, "path": path, "title": title,
-            "now": int(time.time()),
-        })
+        """,
+            parameters={
+                "id": doc_id,
+                "path": path,
+                "title": title,
+                "now": int(time.time()),
+            },
+        )
 
     # =========================================================================
     # Bulk writes (Parquet-based, 25x faster than iterative)
@@ -353,28 +415,28 @@ class Graph(GraphWriter):
         """Build + log SHACL-vocabulary violations for entities rejected on an
         out-of-ontology type. Accumulates on self.last_violations; never raises."""
         from .models import validation as v
+
         for e in invalid:
             viol = v.unknown_entity_type(e.get("id", ""), e.get("entity_type", ""))
             self.last_violations.append(viol)
         logger.info(
             "Rejected %d entities (type not in ontology): %s",
             len(invalid),
-            [viol.to_shacl_dict() for viol in self.last_violations[-len(invalid):]],
+            [viol.to_shacl_dict() for viol in self.last_violations[-len(invalid) :]],
         )
 
     def _record_edge_violations(self, invalid: list[dict]) -> None:
         """Build + log SHACL-vocabulary violations for edges rejected on an
         out-of-ontology type. Accumulates on self.last_violations; never raises."""
         from .models import validation as v
+
         for e in invalid:
-            key = v.edge_key(
-                e.get("source_id", ""), e.get("edge_type", ""), e.get("target_id", "")
-            )
+            key = v.edge_key(e.get("source_id", ""), e.get("edge_type", ""), e.get("target_id", ""))
             self.last_violations.append(v.unknown_edge_type(key, e.get("edge_type", "")))
         logger.info(
             "Rejected %d edges (type not in ontology): %s",
             len(invalid),
-            [viol.to_shacl_dict() for viol in self.last_violations[-len(invalid):]],
+            [viol.to_shacl_dict() for viol in self.last_violations[-len(invalid) :]],
         )
 
     def _record_grade_violations(self, invalid: list[dict]) -> None:
@@ -382,18 +444,21 @@ class Graph(GraphWriter):
         grade locality (endpoint types not in the ontology's EDGE_DOMAIN_RANGE).
         Each dict carries `_src_type`/`_tgt_type` set by `_grade_filter`."""
         from .models import validation as v
+
         for e in invalid:
-            key = v.edge_key(
-                e.get("source_id", ""), e.get("edge_type", ""), e.get("target_id", "")
+            key = v.edge_key(e.get("source_id", ""), e.get("edge_type", ""), e.get("target_id", ""))
+            self.last_violations.append(
+                v.grade_violation(
+                    key,
+                    e.get("edge_type", ""),
+                    e.get("_src_type", ""),
+                    e.get("_tgt_type", ""),
+                )
             )
-            self.last_violations.append(v.grade_violation(
-                key, e.get("edge_type", ""),
-                e.get("_src_type", ""), e.get("_tgt_type", ""),
-            ))
         logger.info(
             "Rejected %d edges (grade locality): %s",
             len(invalid),
-            [viol.to_shacl_dict() for viol in self.last_violations[-len(invalid):]],
+            [viol.to_shacl_dict() for viol in self.last_violations[-len(invalid) :]],
         )
 
     def _grade_filter(self, edges: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -405,16 +470,17 @@ class Graph(GraphWriter):
         fall through to the MERGE, which no-ops on a missing endpoint."""
         type_map = {
             r["id"]: r.get("entity_type")
-            for r in self.query(
-                "MATCH (e:Entity) RETURN e.id AS id, e.entity_type AS entity_type"
-            )
+            for r in self.query("MATCH (e:Entity) RETURN e.id AS id, e.entity_type AS entity_type")
         }
         ok, bad = [], []
         for e in edges:
             st = type_map.get(e.get("source_id"))
             tt = type_map.get(e.get("target_id"))
-            if (st is not None and tt is not None
-                    and not self.ontology.validate_grade(e["edge_type"], st, tt)):
+            if (
+                st is not None
+                and tt is not None
+                and not self.ontology.validate_grade(e["edge_type"], st, tt)
+            ):
                 bad.append({**e, "_src_type": st, "_tgt_type": tt})
             else:
                 ok.append(e)
@@ -450,8 +516,11 @@ class Graph(GraphWriter):
 
         # Ensure all required columns exist with defaults
         defaults = {
-            "description": "", "confidence": 0.5, "source_url": "",
-            "provenance": "unknown", "created_at": int(time.time()),
+            "description": "",
+            "confidence": 0.5,
+            "source_url": "",
+            "provenance": "unknown",
+            "created_at": int(time.time()),
             "updated_at": int(time.time()),
         }
         for col, default in defaults.items():
@@ -459,8 +528,17 @@ class Graph(GraphWriter):
                 df[col] = default
 
         # Select columns in schema order, include embedding as null
-        cols = ["id", "entity_type", "label", "description", "confidence",
-                "source_url", "provenance", "created_at", "updated_at"]
+        cols = [
+            "id",
+            "entity_type",
+            "label",
+            "description",
+            "confidence",
+            "source_url",
+            "provenance",
+            "created_at",
+            "updated_at",
+        ]
         df = df[cols]
 
         # Write via PyArrow to get properly-typed null embedding column
@@ -515,25 +593,72 @@ class Graph(GraphWriter):
         # Batch them but use parameterized MERGE for correctness.
         now = int(time.time())
         for e in valid:
-            self.conn.execute("""
+            self.conn.execute(
+                """
                 MATCH (a:Entity {id: $src}), (b:Entity {id: $tgt})
                 MERGE (a)-[r:RELATES_TO {edge_type: $etype}]->(b)
                 ON CREATE SET r.weight = $w, r.confidence = $conf,
                     r.evidence = $ev, r.source_url = $url, r.provenance = $prov,
                     r.created_at = $now
-            """, parameters={
-                "src": e.get("source_id", ""),
-                "tgt": e.get("target_id", ""),
-                "etype": e["edge_type"],
-                "w": e.get("weight", 1.0),
-                "conf": e.get("confidence", 0.5),
-                "ev": e.get("evidence", ""),
-                "url": e.get("source_url", ""),
-                "prov": e.get("provenance", "unknown"),
-                "now": e.get("created_at", now),
-            })
+            """,
+                parameters={
+                    "src": e.get("source_id", ""),
+                    "tgt": e.get("target_id", ""),
+                    "etype": e["edge_type"],
+                    "w": e.get("weight", 1.0),
+                    "conf": e.get("confidence", 0.5),
+                    "ev": e.get("evidence", ""),
+                    "url": e.get("source_url", ""),
+                    "prov": e.get("provenance", "unknown"),
+                    "now": e.get("created_at", now),
+                },
+            )
 
         return len(valid)
+
+    def bulk_add_mentions(self, mentions: list[dict]) -> int:
+        """Create deterministic Entity -> Document provenance edges.
+
+        These edges keep source documents connected to extracted entities without
+        pretending there is a semantic Entity -> Entity relationship.
+        """
+        if not mentions:
+            return 0
+
+        now = int(time.time())
+        seen = set()
+        written = 0
+        for mention in mentions:
+            entity_id = mention.get("entity_id") or mention.get("id")
+            doc_id = mention.get("doc_id")
+            if not entity_id or not doc_id:
+                continue
+            key = (entity_id, doc_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            self.conn.execute(
+                """
+                MATCH (e:Entity {id: $entity_id}), (d:Document {id: $doc_id})
+                MERGE (e)-[r:MENTIONED_IN]->(d)
+                ON CREATE SET r.edge_type = 'MENTIONED_IN', r.weight = $weight,
+                    r.confidence = $confidence, r.evidence = $evidence,
+                    r.source_url = $source_url, r.provenance = $provenance,
+                    r.created_at = $now
+                """,
+                parameters={
+                    "entity_id": entity_id,
+                    "doc_id": doc_id,
+                    "weight": mention.get("weight", 1.0),
+                    "confidence": mention.get("confidence", 0.9),
+                    "evidence": mention.get("evidence", ""),
+                    "source_url": mention.get("source_url", ""),
+                    "provenance": mention.get("provenance", "document_mention"),
+                    "now": mention.get("created_at", now),
+                },
+            )
+            written += 1
+        return written
 
     # =========================================================================
     # Embedding storage and vector search
@@ -541,10 +666,13 @@ class Graph(GraphWriter):
 
     def set_embedding(self, entity_id: str, embedding: list[float]) -> None:
         """Store an embedding vector on an entity node."""
-        self.conn.execute("""
+        self.conn.execute(
+            """
             MATCH (e:Entity {id: $id})
             SET e.embedding = $emb
-        """, parameters={"id": entity_id, "emb": embedding})
+        """,
+            parameters={"id": entity_id, "emb": embedding},
+        )
 
     def rebuild_vector_indexes(self) -> None:
         """
@@ -556,8 +684,7 @@ class Graph(GraphWriter):
             ("CommunityMeta", "community_vec", "embedding"),
         ]:
             try:
-                self.conn.execute(
-                    f"CALL DROP_VECTOR_INDEX('{table}', '{index_name}')")
+                self.conn.execute(f"CALL DROP_VECTOR_INDEX('{table}', '{index_name}')")
             except Exception:
                 pass
             try:
@@ -568,16 +695,18 @@ class Graph(GraphWriter):
             except Exception:
                 pass
 
-    def vector_search(self, query_embedding: list[float],
-                      limit: int = 10) -> list:
+    def vector_search(self, query_embedding: list[float], limit: int = 10) -> list:
         """Find entities by vector similarity. Uses HNSW index if available, falls back to brute force."""
         # Try HNSW index first
         try:
-            result = self.conn.execute("""
+            result = self.conn.execute(
+                """
                 CALL QUERY_VECTOR_INDEX('Entity', 'entity_vec', $qemb, $limit)
                 RETURN node.id AS id, node.label AS label,
                        node.entity_type AS type, distance AS score
-            """, parameters={"qemb": query_embedding, "limit": limit})
+            """,
+                parameters={"qemb": query_embedding, "limit": limit},
+            )
             columns = result.get_column_names()
             rows = []
             while result.has_next():
@@ -590,8 +719,10 @@ class Graph(GraphWriter):
 
         # Fallback: brute-force cosine similarity
         from .queries import QUERIES
-        return self.query(QUERIES["vector_search"],
-                          parameters={"qemb": query_embedding, "limit": limit})
+
+        return self.query(
+            QUERIES["vector_search"], parameters={"qemb": query_embedding, "limit": limit}
+        )
 
     # =========================================================================
     # Queries
@@ -609,45 +740,48 @@ class Graph(GraphWriter):
 
     def entity_count(self) -> int:
         from .queries import QUERIES
+
         result = self.query(QUERIES["entity_count"])
         return result[0]["cnt"] if result else 0
 
     def edge_count(self) -> int:
         from .queries import QUERIES
+
         result = self.query(QUERIES["edge_count"])
         return result[0]["cnt"] if result else 0
 
     def document_count(self) -> int:
         from .queries import QUERIES
+
         result = self.query(QUERIES["document_count"])
         return result[0]["cnt"] if result else 0
 
     def type_distribution(self) -> dict:
         """Entity type distribution (overrides GraphWriter bi-temporal version)."""
-        rows = self.query(
-            "MATCH (e:Entity) RETURN e.entity_type AS t, count(*) AS c"
-        )
+        rows = self.query("MATCH (e:Entity) RETURN e.entity_type AS t, count(*) AS c")
         return {r["t"]: r["c"] for r in rows}
 
     def edge_type_distribution(self) -> dict:
         """Edge type distribution (overrides GraphWriter bi-temporal version)."""
         rows = self.query(
-            "MATCH (a:Entity)-[e:RELATES_TO]->(b:Entity) "
-            "RETURN e.edge_type AS t, count(*) AS c"
+            "MATCH (a:Entity)-[e:RELATES_TO]->(b:Entity) " "RETURN e.edge_type AS t, count(*) AS c"
         )
         return {r["t"]: r["c"] for r in rows}
 
-    def find_path(self, source_label: str, target_label: str,
-                  max_hops: int = 4) -> list:
+    def find_path(self, source_label: str, target_label: str, max_hops: int = 4) -> list:
         """Find typed paths between two entities by label."""
-        raw = self.query("""
+        raw = self.query(
+            """
             MATCH p = (a:Entity)-[r:RELATES_TO*1..%d]->(b:Entity)
             WHERE a.label CONTAINS $src AND b.label CONTAINS $tgt
             RETURN nodes(p) AS path_nodes,
                    rels(p) AS path_rels,
                    length(p) AS hops
             LIMIT 5
-        """ % max_hops, parameters={"src": source_label, "tgt": target_label})
+        """
+            % max_hops,
+            parameters={"src": source_label, "tgt": target_label},
+        )
 
         # Post-process into clean format
         results = []
@@ -657,15 +791,16 @@ class Graph(GraphWriter):
             path_conf = 1.0
             for r in row["path_rels"]:
                 path_conf *= r.get("confidence", 1.0)
-            results.append({
-                "node_labels": node_labels,
-                "edge_types": edge_types,
-                "path_confidence": round(path_conf, 4),
-            })
+            results.append(
+                {
+                    "node_labels": node_labels,
+                    "edge_types": edge_types,
+                    "path_confidence": round(path_conf, 4),
+                }
+            )
         return sorted(results, key=lambda p: -p["path_confidence"])
 
-    def find_contradictions(self, entity_ids: list[str],
-                            limit: int = 10) -> list[dict]:
+    def find_contradictions(self, entity_ids: list[str], limit: int = 10) -> list[dict]:
         """Find CONFLICTS_WITH edges for the given entities.
 
         Returns dicts with: source_label, target_label, edge_type,
@@ -674,11 +809,14 @@ class Graph(GraphWriter):
         results = []
         seen = set()
         for eid in entity_ids[:20]:
-            rows = self.query("""
+            rows = self.query(
+                """
                 MATCH (a:Entity {id: $eid})-[r:RELATES_TO {edge_type: 'CONFLICTS_WITH'}]->(b:Entity)
                 RETURN a.label AS source_label, b.label AS target_label,
                        r.confidence AS confidence, r.provenance AS provenance
-            """, parameters={"eid": eid})
+            """,
+                parameters={"eid": eid},
+            )
             for row in rows:
                 key = f"{row['source_label']}|{row['target_label']}"
                 if key in seen:

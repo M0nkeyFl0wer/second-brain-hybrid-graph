@@ -12,9 +12,9 @@ Run standalone:
 All endpoints return JSON and degrade gracefully — empty results rather
 than 500 errors — so the frontend always has something to render.
 """
+
 from __future__ import annotations
 
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -101,6 +101,7 @@ if _STATIC_DIR.exists():
 # Helper: safe query wrapper
 # ---------------------------------------------------------------------------
 
+
 def _safe_query(cypher: str, parameters: dict = None, fallback=None):
     """Run a Cypher query; return *fallback* on any error instead of raising."""
     try:
@@ -112,6 +113,7 @@ def _safe_query(cypher: str, parameters: dict = None, fallback=None):
 # ---------------------------------------------------------------------------
 # API: /api/status
 # ---------------------------------------------------------------------------
+
 
 @app.get("/api/status")
 def api_status():
@@ -136,9 +138,7 @@ def api_status():
 
         # Last ingestion timestamp
         last_ingestion = None
-        r = _safe_query(
-            "MATCH (d:Document) RETURN d.ingested_at AS t ORDER BY t DESC LIMIT 1"
-        )
+        r = _safe_query("MATCH (d:Document) RETURN d.ingested_at AS t ORDER BY t DESC LIMIT 1")
         if r and r[0].get("t"):
             last_ingestion = datetime.fromtimestamp(r[0]["t"]).isoformat()
 
@@ -155,16 +155,10 @@ def api_status():
 
         # ICR — Instantiated Class Ratio: fraction of declared entity types
         # that actually appear in the graph. Higher is better.
-        icr = (
-            len(populated_types & declared_types) / len(declared_types)
-            if declared_types else 0
-        )
+        icr = len(populated_types & declared_types) / len(declared_types) if declared_types else 0
 
         # IPR — Instantiated Property Ratio: same idea for edge types.
-        ipr = (
-            len(populated_edges & declared_edges) / len(declared_edges)
-            if declared_edges else 0
-        )
+        ipr = len(populated_edges & declared_edges) / len(declared_edges) if declared_edges else 0
 
         # CI — Concentration Index: proportion of the most-common entity type.
         # Lower is healthier (indicates type diversity).
@@ -189,10 +183,19 @@ def api_status():
 
     except Exception as exc:
         return JSONResponse(
-            {"error": str(exc), "entity_count": 0, "edge_count": 0,
-             "doc_count": 0, "edge_node_count": 0, "community_count": 0,
-             "last_ingestion": None, "icr": 0, "ipr": 0, "ci": 0,
-             "ci_dominant": ""},
+            {
+                "error": str(exc),
+                "entity_count": 0,
+                "edge_count": 0,
+                "doc_count": 0,
+                "edge_node_count": 0,
+                "community_count": 0,
+                "last_ingestion": None,
+                "icr": 0,
+                "ipr": 0,
+                "ci": 0,
+                "ci_dominant": "",
+            },
             status_code=200,  # degrade gracefully — no 500
         )
 
@@ -200,6 +203,7 @@ def api_status():
 # ---------------------------------------------------------------------------
 # API: /api/types
 # ---------------------------------------------------------------------------
+
 
 @app.get("/api/types")
 def api_types():
@@ -296,7 +300,7 @@ def api_graph(
 
         # Compute degree for each node (within visible set) to rank them.
         degree = {nid: 0 for nid in node_ids}
-        for e in (edges_raw or []):
+        for e in edges_raw or []:
             if e["source"] in degree:
                 degree[e["source"]] += 1
             if e["target"] in degree:
@@ -304,22 +308,19 @@ def api_graph(
 
         # Cap at MAX_GRAPH_NODES, keeping highest-degree nodes.
         if len(nodes_raw) > _MAX_GRAPH_NODES:
-            top_ids = set(
-                sorted(degree, key=lambda nid: -degree[nid])[:_MAX_GRAPH_NODES]
-            )
+            top_ids = set(sorted(degree, key=lambda nid: -degree[nid])[:_MAX_GRAPH_NODES])
             nodes_raw = [n for n in nodes_raw if n["id"] in top_ids]
             node_ids = top_ids
 
         # Filter edges to only those connecting visible nodes.
         edges_filtered = [
-            e for e in (edges_raw or [])
-            if e["source"] in node_ids and e["target"] in node_ids
+            e for e in (edges_raw or []) if e["source"] in node_ids and e["target"] in node_ids
         ]
 
         # Optional skeleton mode: reduce edges for cleaner visualization.
         if skeleton:
             try:
-                from second_brain.topology import extract_skeleton, build_networkx_graph
+                from second_brain.topology import extract_skeleton
                 import networkx as nx
 
                 # Build a temporary NetworkX graph from the filtered data.
@@ -328,8 +329,10 @@ def api_graph(
                     G.add_node(n["id"], label=n["label"], type=n["type"])
                 for e in edges_filtered:
                     G.add_edge(
-                        e["source"], e["target"],
-                        type=e["type"], weight=e.get("weight", 1.0),
+                        e["source"],
+                        e["target"],
+                        type=e["type"],
+                        weight=e.get("weight", 1.0),
                     )
 
                 S = extract_skeleton(G, max_edges=200)
@@ -380,6 +383,7 @@ def api_graph(
 # ---------------------------------------------------------------------------
 # API: /api/graph/{entity_id}  —  1-hop entity expansion
 # ---------------------------------------------------------------------------
+
 
 @app.get("/api/graph/{entity_id}")
 def api_entity_expand(entity_id: str):
@@ -441,15 +445,19 @@ def api_entity_expand(entity_id: str):
         # Merge and deduplicate neighbors by id.
         seen = set()
         neighbors = []
-        for row in (outgoing or []) + (incoming or []) + (via_edge_fwd or []) + (via_edge_rev or []):
+        for row in (
+            (outgoing or []) + (incoming or []) + (via_edge_fwd or []) + (via_edge_rev or [])
+        ):
             if row["id"] not in seen:
                 seen.add(row["id"])
-                neighbors.append({
-                    "id": row["id"],
-                    "label": row["label"],
-                    "type": row["type"],
-                    "edge_type": row.get("edge_type", ""),
-                })
+                neighbors.append(
+                    {
+                        "id": row["id"],
+                        "label": row["label"],
+                        "type": row["type"],
+                        "edge_type": row.get("edge_type", ""),
+                    }
+                )
 
         return {
             "entity": {
@@ -471,6 +479,7 @@ def api_entity_expand(entity_id: str):
 # ---------------------------------------------------------------------------
 # API: /api/hidden
 # ---------------------------------------------------------------------------
+
 
 @app.get("/api/hidden")
 def api_hidden():
@@ -496,7 +505,7 @@ def api_hidden():
             for r in results
         ]
 
-    except Exception as exc:
+    except Exception:
         # Hidden connections require embeddings + HNSW index.
         # Return empty list if unavailable rather than erroring.
         return JSONResponse([], status_code=200)
@@ -505,6 +514,7 @@ def api_hidden():
 # ---------------------------------------------------------------------------
 # API: /api/communities
 # ---------------------------------------------------------------------------
+
 
 @app.get("/api/communities")
 def api_communities():
@@ -530,19 +540,21 @@ def api_communities():
                 # top_entities is stored as a comma-separated string.
                 "top_entities": (
                     [s.strip() for s in row["top_entities"].split(",")]
-                    if row.get("top_entities") else []
+                    if row.get("top_entities")
+                    else []
                 ),
             }
             for row in (rows or [])
         ]
 
-    except Exception as exc:
+    except Exception:
         return JSONResponse([], status_code=200)
 
 
 # ---------------------------------------------------------------------------
 # API: /api/search
 # ---------------------------------------------------------------------------
+
 
 @app.get("/api/search")
 def api_search(
@@ -649,6 +661,7 @@ def api_search(
 # Path traversal — visualize multi-hop reasoning chains
 # ---------------------------------------------------------------------------
 
+
 @app.get("/api/path")
 def api_path(source: str = "", target: str = "", max_hops: int = 4):
     """
@@ -680,13 +693,15 @@ def api_path(source: str = "", target: str = "", max_hops: int = 4):
                     hop["edge_to_next"] = p["edge_types"][i]
                 hops.append(hop)
 
-            enriched.append({
-                "hops": hops,
-                "node_labels": p["node_labels"],
-                "edge_types": p["edge_types"],
-                "path_confidence": p["path_confidence"],
-                "hop_count": len(p["edge_types"]),
-            })
+            enriched.append(
+                {
+                    "hops": hops,
+                    "node_labels": p["node_labels"],
+                    "edge_types": p["edge_types"],
+                    "path_confidence": p["path_confidence"],
+                    "hop_count": len(p["edge_types"]),
+                }
+            )
 
         return {
             "source": source,

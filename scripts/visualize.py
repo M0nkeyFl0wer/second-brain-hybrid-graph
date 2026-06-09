@@ -18,6 +18,7 @@ Usage:
     python scripts/visualize.py                       # default graph + output
     python scripts/visualize.py --graph data/graph.lbug --out graph.html
 """
+
 from __future__ import annotations
 
 import argparse
@@ -40,10 +41,7 @@ def load_graph_native(graph_path: str) -> nx.Graph:
     """
     db = lb.Database(graph_path, read_only=True, buffer_pool_size=256 * 1024 * 1024)
     conn = lb.Connection(db)
-    res = conn.execute(
-        "MATCH (a:Entity)-[r]->(b:Entity) "
-        "RETURN a, r, b"
-    )
+    res = conn.execute("MATCH (a:Entity)-[r]->(b:Entity) " "RETURN a, r, b")
     G: nx.Graph
     try:
         # Native export — directed multigraph; collapse to simple undirected
@@ -73,6 +71,7 @@ def homology(G: nx.Graph) -> dict:
     """Persistent homology via the project's topology helper."""
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from second_brain.topology import run_persistent_homology
+
     return run_persistent_homology(G)
 
 
@@ -82,6 +81,7 @@ def render(G: nx.Graph, homology_summary: dict, out_path: str) -> None:
     # Louvain communities for coloring
     try:
         from networkx.algorithms.community import louvain_communities
+
         comms = louvain_communities(G, seed=42) if len(G) else []
     except Exception:
         comms = list(nx.connected_components(G))
@@ -91,12 +91,28 @@ def render(G: nx.Graph, homology_summary: dict, out_path: str) -> None:
             node_comm[n] = i
 
     palette = [
-        "#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#46f0f0",
-        "#f032e6", "#bcf60c", "#fabebe", "#008080", "#9a6324", "#800000",
+        "#e6194b",
+        "#3cb44b",
+        "#4363d8",
+        "#f58231",
+        "#911eb4",
+        "#46f0f0",
+        "#f032e6",
+        "#bcf60c",
+        "#fabebe",
+        "#008080",
+        "#9a6324",
+        "#800000",
     ]
 
-    net = Network(height="800px", width="100%", bgcolor="#111", font_color="#eee",
-                  notebook=False, directed=False)
+    net = Network(
+        height="800px",
+        width="100%",
+        bgcolor="#111",
+        font_color="#eee",
+        notebook=False,
+        directed=False,
+    )
     net.barnes_hut(gravity=-8000, central_gravity=0.3, spring_length=120)
 
     for n, data in G.nodes(data=True):
@@ -106,7 +122,7 @@ def render(G: nx.Graph, homology_summary: dict, out_path: str) -> None:
         etype = data.get("entity_type", "concept")
         net.add_node(
             n,
-            label=label if deg > 2 else "",          # only label hubs, keep it readable
+            label=label if deg > 2 else "",  # only label hubs, keep it readable
             title=f"{label}\ntype: {etype}\ndegree: {deg}",
             color=palette[ci % len(palette)],
             size=8 + 3 * deg,
@@ -151,8 +167,10 @@ def main() -> None:
     print("Computing persistent homology (Ripser)...")
     hsum = homology(G)
     if hsum.get("available"):
-        print(f"  H0={hsum.get('h0_features')}  H1={hsum.get('h1_features')}  "
-              f"persistent H1={hsum.get('h1_persistent')}")
+        print(
+            f"  H0={hsum.get('h0_features')}  H1={hsum.get('h1_features')}  "
+            f"persistent H1={hsum.get('h1_persistent')}"
+        )
     else:
         print(f"  homology unavailable: {hsum.get('reason')}")
 

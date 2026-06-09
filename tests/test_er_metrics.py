@@ -94,9 +94,51 @@ class TestGoldSet:
         if it did, there'd be nothing for a resolver to improve and the gold set
         would be trivial."""
         from eval.run_er_eval import TARGET_F1, slug_baseline_assignment
+
         gold_clusters = [c["members"] for c in self._gold()["clusters"]]
         gold = clusters_to_assignment(gold_clusters)
         items = list(gold.keys())
         predicted = slug_baseline_assignment(items)
         _, _, f1 = bcubed_pr_f1(gold, predicted)
         assert f1 < TARGET_F1
+
+
+class TestEvalGates:
+    def test_runner_fails_under_f1_threshold(self, tmp_path):
+        from eval.run_er_eval import main
+
+        gold = tmp_path / "gold.json"
+        gold.write_text(
+            json.dumps(
+                {
+                    "clusters": [{"canonical": "A", "members": ["A", "a"]}],
+                    "contrast": [],
+                    "types": {"A": "concept", "a": "concept"},
+                }
+            )
+        )
+        pred = tmp_path / "pred.json"
+        pred.write_text(json.dumps({"clusters": [{"members": ["A"]}, {"members": ["a"]}]}))
+
+        assert main(["--gold", str(gold), "--pred", str(pred), "--fail-under", "0.90"]) == 1
+
+    def test_runner_enforces_merge_violation_ceiling(self, tmp_path):
+        from eval.run_er_eval import main
+
+        gold = tmp_path / "gold.json"
+        gold.write_text(
+            json.dumps(
+                {
+                    "clusters": [
+                        {"canonical": "A", "members": ["A"]},
+                        {"canonical": "B", "members": ["B"]},
+                    ],
+                    "contrast": [],
+                    "types": {"A": "concept", "B": "concept"},
+                }
+            )
+        )
+        pred = tmp_path / "pred.json"
+        pred.write_text(json.dumps({"clusters": [{"members": ["A", "B"]}]}))
+
+        assert main(["--gold", str(gold), "--pred", str(pred), "--max-violations", "0"]) == 1

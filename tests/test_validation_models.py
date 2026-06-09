@@ -28,22 +28,29 @@ class TestValidationViolation:
         assert d["sh:resultSeverity"] == "sh:Violation"
 
     def test_severity_iri_mapping(self):
-        assert v.missing_evidence("a -[SUPPORTS]-> b", "SUPPORTS", 3).to_shacl_dict()[
-            "sh:resultSeverity"
-        ] == "sh:Warning"
+        assert (
+            v.missing_evidence("a -[SUPPORTS]-> b", "SUPPORTS", 3).to_shacl_dict()[
+                "sh:resultSeverity"
+            ]
+            == "sh:Warning"
+        )
 
 
 class TestValidationReport:
     def test_conforms_true_when_only_warnings(self):
-        report = ValidationReport.from_violations([
-            v.missing_evidence("a -[SUPPORTS]-> b", "SUPPORTS", 2),
-        ])
+        report = ValidationReport.from_violations(
+            [
+                v.missing_evidence("a -[SUPPORTS]-> b", "SUPPORTS", 2),
+            ]
+        )
         assert report.conforms is True
 
     def test_conforms_false_with_a_violation(self):
-        report = ValidationReport.from_violations([
-            v.unknown_edge_type("a -[FOO]-> b", "FOO"),
-        ])
+        report = ValidationReport.from_violations(
+            [
+                v.unknown_edge_type("a -[FOO]-> b", "FOO"),
+            ]
+        )
         assert report.conforms is False
 
     def test_shacl_report_shape(self):
@@ -56,13 +63,20 @@ class TestValidationReport:
 class TestCheckExtraction:
     def _ontology(self):
         from second_brain.ontology import Ontology
+
         return Ontology()
 
     def test_clean_extraction_conforms(self):
         result = ExtractionResult(
             entities=[ExtractedEntity(name="memory", entity_type="concept")],
-            edges=[ExtractedEdge(source="memory", target="sleep", edge_type="SUPPORTS",
-                                 evidence="sleep consolidates memory")],
+            edges=[
+                ExtractedEdge(
+                    source="memory",
+                    target="sleep",
+                    edge_type="SUPPORTS",
+                    evidence="sleep consolidates memory",
+                )
+            ],
         )
         report = check_extraction(result, self._ontology())
         assert report.conforms is True
@@ -82,10 +96,18 @@ class TestCheckExtraction:
                 ExtractedEntity(name="causal inference", entity_type="method"),
             ],
             edges=[
-                ExtractedEdge(source="Obsidian", target="linking", edge_type="IMPLEMENTS",
-                              evidence="Obsidian implements bidirectional linking"),
-                ExtractedEdge(source="pandas", target="numpy", edge_type="REQUIRES",
-                              evidence="pandas requires numpy"),
+                ExtractedEdge(
+                    source="Obsidian",
+                    target="linking",
+                    edge_type="IMPLEMENTS",
+                    evidence="Obsidian implements bidirectional linking",
+                ),
+                ExtractedEdge(
+                    source="pandas",
+                    target="numpy",
+                    edge_type="REQUIRES",
+                    evidence="pandas requires numpy",
+                ),
             ],
         )
         report = check_extraction(result, self._ontology())
@@ -103,25 +125,31 @@ class TestCheckExtraction:
 
 class TestGraphWiring:
     def test_bulk_add_entities_records_violations(self, graph):
-        n = graph.bulk_add_entities([
-            {"id": "good", "entity_type": "concept", "label": "Good"},
-            {"id": "bad", "entity_type": "widget", "label": "Bad"},
-        ])
+        n = graph.bulk_add_entities(
+            [
+                {"id": "good", "entity_type": "concept", "label": "Good"},
+                {"id": "bad", "entity_type": "widget", "label": "Bad"},
+            ]
+        )
         assert n == 1  # only the valid one written; count contract unchanged
         assert len(graph.last_violations) == 1
         assert graph.last_violations[0].focus_node == "bad"
         assert graph.last_violations[0].result_path == "entity_type"
 
     def test_bulk_add_edges_records_violations(self, graph):
-        graph.bulk_add_entities([
-            {"id": "a", "entity_type": "concept", "label": "A"},
-            {"id": "b", "entity_type": "concept", "label": "B"},
-        ])
+        graph.bulk_add_entities(
+            [
+                {"id": "a", "entity_type": "concept", "label": "A"},
+                {"id": "b", "entity_type": "concept", "label": "B"},
+            ]
+        )
         graph.last_violations = []
-        n = graph.bulk_add_edges([
-            {"source_id": "a", "target_id": "b", "edge_type": "SUPPORTS"},
-            {"source_id": "a", "target_id": "b", "edge_type": "BOGUS"},
-        ])
+        n = graph.bulk_add_edges(
+            [
+                {"source_id": "a", "target_id": "b", "edge_type": "SUPPORTS"},
+                {"source_id": "a", "target_id": "b", "edge_type": "BOGUS"},
+            ]
+        )
         assert n == 1
         assert len(graph.last_violations) == 1
         assert graph.last_violations[0].result_path == "edge_type"

@@ -65,7 +65,9 @@ class ValidationViolation(BaseModel):
 class ValidationReport(BaseModel):
     """SHACL ValidationReport: `sh:conforms` + the list of `sh:result`s."""
 
-    conforms: bool = Field(description="sh:conforms — true iff there are no violation-severity results")
+    conforms: bool = Field(
+        description="sh:conforms — true iff there are no violation-severity results"
+    )
     results: list[ValidationViolation] = Field(default_factory=list)
 
     @classmethod

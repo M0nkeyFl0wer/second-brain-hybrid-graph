@@ -255,8 +255,10 @@ class ExtractionResult(BaseModel):
         if dropped_e or dropped_x:
             logger.info(
                 "extraction validation dropped %d entit%s, %d edge%s",
-                dropped_e, "y" if dropped_e == 1 else "ies",
-                dropped_x, "" if dropped_x == 1 else "s",
+                dropped_e,
+                "y" if dropped_e == 1 else "ies",
+                dropped_x,
+                "" if dropped_x == 1 else "s",
             )
 
         return cls(

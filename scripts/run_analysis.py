@@ -6,10 +6,12 @@ Analyzes the structure of your captured ideas: how they cluster, where gaps
 exist between idea groups, which concepts bridge different areas of thinking,
 and where beliefs conflict.
 """
+
 import json
 import sys
 from datetime import datetime
 from pathlib import Path
+
 sys.path.insert(0, ".")
 
 from second_brain.graph import Graph
@@ -50,8 +52,10 @@ def main():
                 ca = gap["community_a"]
                 cb = gap["community_b"]
                 print(f"  [{gap['priority']}] {ca['top_entities'][0]} ↔ {cb['top_entities'][0]}")
-                print(f"         {ca['size']} entities ↔ {cb['size']} entities | "
-                      f"cross-edges: {gap['cross_edges']}")
+                print(
+                    f"         {ca['size']} entities ↔ {cb['size']} entities | "
+                    f"cross-edges: {gap['cross_edges']}"
+                )
                 print(f"         → {gap['question']}")
                 print()
 
@@ -63,7 +67,7 @@ def main():
             for s in surprising[:10]:
                 print(f"  {s['label']} ({s['type']})")
                 print(f"    Betweenness: {s['betweenness']} | Degree: {s['degree']}")
-                print(f"    → Bridges different areas of your thinking")
+                print("    → Bridges different areas of your thinking")
                 print()
 
         # Contradictions
@@ -72,7 +76,7 @@ def main():
             print("-" * 60)
             for c in report.contradictions[:5]:
                 print(f"  \"{c['claim_a']}\"")
-                print(f"  contradicts")
+                print("  contradicts")
                 print(f"  \"{c['claim_b']}\"")
                 print()
 
@@ -97,8 +101,10 @@ def main():
                 print()
                 print("  Top persistent H1 features (reasoning gaps):")
                 for h in homology["h1_details"][:5]:
-                    print(f"    birth: {h['birth']}, death: {h['death']}, "
-                          f"persistence: {h['persistence']}")
+                    print(
+                        f"    birth: {h['birth']}, death: {h['death']}, "
+                        f"persistence: {h['persistence']}"
+                    )
         else:
             print(f"  {homology.get('reason', 'Not available')}")
 

@@ -2,6 +2,7 @@
 Configuration for open-second-brain.
 Edit this file to match your setup. Defaults are fully local — no cloud needed.
 """
+
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -92,10 +93,10 @@ TOP_BETWEENNESS = 10
 # =============================================================================
 
 BRIEFING_SECTIONS = [
-    "new_ideas",              # Entities added in last 24h
-    "conflicting_beliefs",    # CONFLICTS_WITH edges found
-    "knowledge_gaps",         # Community pairs with low cross-connection
-    "hidden_connections",     # Semantically similar but unlinked entities
-    "surprising_bridges",     # High betweenness on low-frequency entities
-    "underdeveloped_ideas",   # Entities needing more connections
+    "new_ideas",  # Entities added in last 24h
+    "conflicting_beliefs",  # CONFLICTS_WITH edges found
+    "knowledge_gaps",  # Community pairs with low cross-connection
+    "hidden_connections",  # Semantically similar but unlinked entities
+    "surprising_bridges",  # High betweenness on low-frequency entities
+    "underdeveloped_ideas",  # Entities needing more connections
 ]

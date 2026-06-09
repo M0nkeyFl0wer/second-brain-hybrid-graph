@@ -7,11 +7,12 @@ surprising bridges, and underdeveloped ideas needing attention.
 
 No AI opinions — just what the graph structure reveals about your thinking.
 """
+
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from .graph import Graph
-from .topology import run_topology, run_persistent_homology, build_networkx_graph
+from .topology import run_topology
 from . import config
 
 
@@ -25,18 +26,23 @@ def generate_briefing(graph: Graph, output_dir: Path = None) -> str:
 
     sections = []
     sections.append(f"# Daily Reflection — {today}\n")
-    sections.append(f"Graph: {report.node_count} entities, {report.edge_count} edges, "
-                    f"{report.community_count} communities, {report.component_count} components\n")
+    sections.append(
+        f"Graph: {report.node_count} entities, {report.edge_count} edges, "
+        f"{report.community_count} communities, {report.component_count} components\n"
+    )
 
     # --- New Ideas (last 24h) ---
     # Surfaces entities added recently so you can see what's fresh in your thinking.
     if "new_ideas" in config.BRIEFING_SECTIONS:
         cutoff = int(time.time()) - 86400
-        new_entities = graph.query("""
+        new_entities = graph.query(
+            """
             MATCH (e:Entity) WHERE e.created_at > $cutoff
             RETURN e.entity_type AS type, count(e) AS cnt
             ORDER BY cnt DESC
-        """, parameters={"cutoff": cutoff})
+        """,
+            parameters={"cutoff": cutoff},
+        )
 
         total_new = sum(e["cnt"] for e in new_entities)
         if total_new > 0:
@@ -63,7 +69,7 @@ def generate_briefing(graph: Graph, output_dir: Path = None) -> str:
                 sections.append(f"  **\"{c['claim_a']}\"**")
                 if c.get("source_a"):
                     sections.append(f"  (source: {c['source_a']})")
-                sections.append(f"  conflicts with")
+                sections.append("  conflicts with")
                 sections.append(f"  **\"{c['claim_b']}\"**")
                 if c.get("source_b"):
                     sections.append(f"  (source: {c['source_b']})")
@@ -78,12 +84,14 @@ def generate_briefing(graph: Graph, output_dir: Path = None) -> str:
             ca = gap["community_a"]
             cb = gap["community_b"]
             priority = gap["priority"]
-            entity_a = ca['top_entities'][0]
-            entity_b = cb['top_entities'][0]
-            sections.append(f"  **{priority}**: \"{entity_a}\" cluster "
-                          f"({ca['size']} entities) ↔ "
-                          f"\"{entity_b}\" cluster "
-                          f"({cb['size']} entities)")
+            entity_a = ca["top_entities"][0]
+            entity_b = cb["top_entities"][0]
+            sections.append(
+                f"  **{priority}**: \"{entity_a}\" cluster "
+                f"({ca['size']} entities) ↔ "
+                f"\"{entity_b}\" cluster "
+                f"({cb['size']} entities)"
+            )
             sections.append(f"  Cross-connections: {gap['cross_edges']}")
             sections.append(f"  → How do your ideas about {entity_a} and {entity_b} relate?")
             sections.append("")
@@ -94,6 +102,7 @@ def generate_briefing(graph: Graph, output_dir: Path = None) -> str:
     if "hidden_connections" in config.BRIEFING_SECTIONS:
         try:
             from .hidden_connections import find_hidden_connections
+
             hidden = find_hidden_connections(graph)
             if hidden:
                 sections.append(f"## Hidden Connections: {len(hidden)}\n")
@@ -115,9 +124,8 @@ def generate_briefing(graph: Graph, output_dir: Path = None) -> str:
             sections.append(f"## Surprising Bridges: {len(surprising)}\n")
             for s in surprising[:5]:
                 sections.append(f"  **{s['label']}** ({s['type']})")
-                sections.append(f"  Betweenness: {s['betweenness']} | "
-                              f"Degree: {s['degree']}")
-                sections.append(f"  → This connects different areas of your thinking.")
+                sections.append(f"  Betweenness: {s['betweenness']} | " f"Degree: {s['degree']}")
+                sections.append("  → This connects different areas of your thinking.")
                 sections.append("")
 
     # --- Ideas Needing Development ---
@@ -125,18 +133,23 @@ def generate_briefing(graph: Graph, output_dir: Path = None) -> str:
     # but haven't connected to anything else yet.
     if "underdeveloped_ideas" in config.BRIEFING_SECTIONS:
         prune_cutoff = int(time.time()) - (config.PRUNE_AGE_DAYS * 86400)
-        unlinked = graph.query("""
+        unlinked = graph.query(
+            """
             MATCH (e:Entity)
             WHERE NOT (e)-[:RELATES_TO]-()
               AND NOT (e)-[:MENTIONED_IN]-()
               AND e.created_at < $cutoff
             RETURN e.label AS label, e.entity_type AS type
             LIMIT 20
-        """, parameters={"cutoff": prune_cutoff})
+        """,
+            parameters={"cutoff": prune_cutoff},
+        )
 
         if unlinked:
-            sections.append(f"## Ideas Needing Development: {len(unlinked)} "
-                          f"unlinked (older than {config.PRUNE_AGE_DAYS} days)\n")
+            sections.append(
+                f"## Ideas Needing Development: {len(unlinked)} "
+                f"unlinked (older than {config.PRUNE_AGE_DAYS} days)\n"
+            )
             for e in unlinked[:10]:
                 sections.append(f"  - {e['label']} ({e['type']})")
             if len(unlinked) > 10:
@@ -145,13 +158,14 @@ def generate_briefing(graph: Graph, output_dir: Path = None) -> str:
 
     # --- Graph Health ---
     sections.append("## Graph Health\n")
-    sections.append(f"  Components: {report.component_count} "
-                   f"(largest: {report.largest_component_size} nodes)")
+    sections.append(
+        f"  Components: {report.component_count} "
+        f"(largest: {report.largest_component_size} nodes)"
+    )
     sections.append(f"  Isolated: {report.isolated_count}")
     sections.append(f"  Communities: {report.community_count}")
     if report.bridges:
-        sections.append(f"  Bridges: {len(report.bridges)} "
-                       f"(fragile single-point connections)")
+        sections.append(f"  Bridges: {len(report.bridges)} " f"(fragile single-point connections)")
     sections.append("")
 
     # Assemble

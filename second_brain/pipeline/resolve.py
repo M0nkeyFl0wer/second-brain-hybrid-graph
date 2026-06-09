@@ -41,11 +41,26 @@ from second_brain.models.resolution import (
     ResolutionMatch,
     ResolutionResult,
 )
+from second_brain.ontology import slugify
 
 # Words skipped when computing acronym initials and when deciding token overlap.
-STOPWORDS = frozenset({
-    "of", "the", "and", "for", "a", "an", "to", "in", "on", "&", "de", "von", "der",
-})
+STOPWORDS = frozenset(
+    {
+        "of",
+        "the",
+        "and",
+        "for",
+        "a",
+        "an",
+        "to",
+        "in",
+        "on",
+        "&",
+        "de",
+        "von",
+        "der",
+    }
+)
 # Leading honorifics stripped before surname matching.
 HONORIFICS = frozenset({"dr", "mr", "mrs", "ms", "prof", "professor", "sir", "dame"})
 
@@ -161,10 +176,21 @@ def match_acronym(la, ta, lb, tb):
 
 
 # Corporate/legal suffixes that don't change a company's identity.
-LEGAL_SUFFIX = frozenset({
-    "inc", "incorporated", "llc", "ltd", "limited", "corp", "corporation",
-    "co", "company", "gmbh", "plc",
-})
+LEGAL_SUFFIX = frozenset(
+    {
+        "inc",
+        "incorporated",
+        "llc",
+        "ltd",
+        "limited",
+        "corp",
+        "corporation",
+        "co",
+        "company",
+        "gmbh",
+        "plc",
+    }
+)
 
 
 def _is_subsequence(short: str, long_: str) -> bool:
@@ -301,6 +327,7 @@ class EntityResolver:
         if embedding_threshold is None:
             try:
                 from second_brain import config
+
                 embedding_threshold = getattr(config, "DEDUP_THRESHOLD", 0.92)
             except Exception:
                 embedding_threshold = 0.92
@@ -348,8 +375,11 @@ class EntityResolver:
                 if res:
                     rule, conf, evidence = res
                     uf.union(a, b)
-                    matches.append(ResolutionMatch(
-                        left=a, right=b, rule=rule, confidence=conf, evidence=evidence))
+                    matches.append(
+                        ResolutionMatch(
+                            left=a, right=b, rule=rule, confidence=conf, evidence=evidence
+                        )
+                    )
                     break
 
         # Tier 2 — embedding similarity (own blocking: kNN over vectors, since
@@ -379,9 +409,15 @@ class EntityResolver:
                 sim = _cosine(self.embeddings[a], self.embeddings[b])
                 if sim >= self.embedding_threshold:
                     uf.union(a, b)
-                    out.append(ResolutionMatch(
-                        left=a, right=b, rule="embedding", confidence=round(sim, 3),
-                        evidence=f"cosine {sim:.3f} >= {self.embedding_threshold}"))
+                    out.append(
+                        ResolutionMatch(
+                            left=a,
+                            right=b,
+                            rule="embedding",
+                            confidence=round(sim, 3),
+                            evidence=f"cosine {sim:.3f} >= {self.embedding_threshold}",
+                        )
+                    )
         return out
 
     @staticmethod
@@ -392,3 +428,152 @@ class EntityResolver:
             group,
             key=lambda lbl: (len(tokens(lbl)), len(lbl), any(c.isupper() for c in lbl)),
         )
+
+
+def canonicalize_extracted_graph(
+    entities: list[dict],
+    edges: list[dict],
+) -> tuple[list[dict], list[dict], ResolutionResult]:
+    """Resolve extracted entities before graph write and rewrite edge endpoints.
+
+    This is intentionally non-destructive: it only rewrites the in-memory batch
+    produced by extraction. Existing LadybugDB nodes/edges are not touched.
+    """
+    if not entities:
+        return [], edges, EntityResolver([]).resolve()
+
+    result = EntityResolver(entities).resolve()
+    label_to_canonical = {
+        member: cluster.canonical for cluster in result.clusters for member in cluster.members
+    }
+    label_to_canonical_id = {
+        label: slugify(canonical) for label, canonical in label_to_canonical.items()
+    }
+
+    id_to_canonical_id: dict[str, str] = {}
+    grouped: dict[str, list[dict]] = {}
+    for entity in entities:
+        label = (entity.get("label") or "").strip()
+        if not label:
+            continue
+        canonical_id = label_to_canonical_id.get(label, slugify(label))
+        if entity.get("id"):
+            id_to_canonical_id[str(entity["id"])] = canonical_id
+        grouped.setdefault(canonical_id, []).append(entity)
+
+    canonical_entities = [_merge_entity_group(canonical_id, group) for canonical_id, group in grouped.items()]
+
+    canonical_edges = []
+    seen_edges = set()
+    for edge in edges:
+        source_id = id_to_canonical_id.get(str(edge.get("source_id", "")), edge.get("source_id"))
+        target_id = id_to_canonical_id.get(str(edge.get("target_id", "")), edge.get("target_id"))
+        if not source_id or not target_id or source_id == target_id:
+            continue
+        rewritten = {**edge, "source_id": source_id, "target_id": target_id}
+        key = (
+            rewritten.get("source_id"),
+            rewritten.get("target_id"),
+            rewritten.get("edge_type"),
+            rewritten.get("evidence", ""),
+        )
+        if key in seen_edges:
+            continue
+        seen_edges.add(key)
+        canonical_edges.append(rewritten)
+
+    incident_ids = {
+        edge_id
+        for edge in canonical_edges
+        for edge_id in (edge.get("source_id"), edge.get("target_id"))
+        if edge_id
+    }
+    canonical_entities = [
+        entity
+        for entity in canonical_entities
+        if entity.get("id") in incident_ids or not _is_unlinked_junk_entity(entity)
+    ]
+
+    return canonical_entities, canonical_edges, result
+
+
+def _merge_entity_group(canonical_id: str, entities: list[dict]) -> dict:
+    def confidence(entity: dict) -> float:
+        try:
+            return float(entity.get("confidence", 0.5))
+        except (TypeError, ValueError):
+            return 0.5
+
+    canonical_label = EntityResolver._pick_canonical(
+        [(e.get("label") or "").strip() for e in entities if (e.get("label") or "").strip()]
+    )
+    typed = [e for e in entities if (e.get("entity_type") or "concept") != "concept"]
+    type_source = max(typed or entities, key=confidence)
+    description_source = max(entities, key=lambda e: len(e.get("description") or ""))
+    non_tag = [e for e in entities if e.get("provenance") != "obsidian_tag"]
+    best = max(non_tag or entities, key=confidence)
+    aliases = sorted({(e.get("label") or "").strip() for e in entities if e.get("label")})
+    doc_ids = sorted(
+        {
+            doc_id
+            for entity in entities
+            for doc_id in ([entity.get("doc_id")] + list(entity.get("doc_ids") or []))
+            if doc_id
+        }
+    )
+
+    return {
+        **best,
+        "id": canonical_id,
+        "entity_type": type_source.get("entity_type") or "concept",
+        "label": canonical_label,
+        "description": description_source.get("description", ""),
+        "confidence": max(confidence(e) for e in entities),
+        "aliases": aliases,
+        "doc_id": doc_ids[0] if doc_ids else best.get("doc_id", ""),
+        "doc_ids": doc_ids,
+    }
+
+
+def _is_unlinked_junk_entity(entity: dict) -> bool:
+    """High-precision orphan filter for entities with no surviving edge.
+
+    The graph should not persist navigation tags, bare years, URLs/file paths,
+    or model-emitted slug literals as standalone semantic nodes. If any of these
+    entities participates in an edge, keep it and let topology/evals judge it.
+    """
+    label = (entity.get("label") or "").strip()
+    entity_id = str(entity.get("id") or "")
+    entity_type = (entity.get("entity_type") or "").strip().lower()
+    provenance = entity.get("provenance") or ""
+    lower = label.lower()
+
+    if provenance == "obsidian_tag" or entity_id.startswith("tag_"):
+        return True
+    if entity_type == "event" and len(label) == 4 and label.isdigit():
+        year = int(label)
+        if 1800 <= year <= 2099:
+            return True
+    if any(token in lower for token in ("http://", "https://", "www.", ".com", ".org")):
+        return True
+    if any(token in lower for token in (".md", ".pdf", "vault/", "ontology.yaml")):
+        return True
+    if _looks_like_generated_slug_literal(label):
+        return True
+    return False
+
+
+def _looks_like_generated_slug_literal(label: str) -> bool:
+    if not label or "_" not in label or " " in label or label.lower() != label:
+        return False
+    prefixes = (
+        "concept_",
+        "event_",
+        "publication_",
+        "location_",
+        "product_",
+        "organization_",
+        "person_",
+        "breed_",
+    )
+    return label.startswith(prefixes)
