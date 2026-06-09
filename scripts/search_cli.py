@@ -8,6 +8,7 @@ sys.path.insert(0, ".")
 
 from second_brain.graph import Graph
 from second_brain.queries import QUERIES
+from second_brain import config
 
 
 def search_keyword(graph, query, entity_type, limit):
@@ -71,6 +72,46 @@ def search_hybrid(graph, query, entity_type, limit):
         )
 
     return results[:limit]
+
+
+def search_chunks(query, limit):
+    """Chunk-level hybrid retrieval over the DuckDB chunk store (BM25 + HNSW + RRF).
+
+    This is document-passage retrieval, distinct from the entity-level modes:
+    it returns the source text chunks most relevant to the query, the substrate
+    a RAG answer would be grounded in.
+    """
+    from second_brain.chunk_store import ChunkStore
+    from second_brain.embed import embed_text
+
+    if not config.CHUNK_STORE_PATH.exists():
+        print(f"No chunk store at {config.CHUNK_STORE_PATH} — run an ingest first.")
+        return []
+
+    try:
+        query_embedding = embed_text(query)
+    except Exception:
+        query_embedding = None  # fall back to BM25-only if the embed backend is down
+
+    store = ChunkStore(config.CHUNK_STORE_PATH, read_only=True, embedding_dim=config.EMBEDDING_DIM)
+    try:
+        return store.search_hybrid(query, query_embedding=query_embedding, limit=limit)
+    finally:
+        store.close()
+
+
+def display_chunks(results):
+    """Pretty-print chunk retrieval results."""
+    if not results:
+        print("No chunks found.")
+        return
+    print(f"Found {len(results)} chunks:\n")
+    for r in results:
+        title = r.get("title") or r.get("source_uri", "")
+        score = r.get("rrf_score", 0)
+        snippet = " ".join(r.get("body", "").split())[:160]
+        print(f"  [{score:.4f}] {title}")
+        print(f"            {snippet}")
 
 
 def display_results(results, mode):
@@ -143,14 +184,20 @@ def main():
     parser.add_argument(
         "--mode",
         "-m",
-        choices=["keyword", "semantic", "hybrid", "hidden"],
+        choices=["keyword", "semantic", "hybrid", "hidden", "chunks"],
         default="keyword",
-        help="Search mode: keyword, semantic, hybrid, or hidden (default: keyword)",
+        help="Search mode: keyword, semantic, hybrid (entity-level), "
+        "chunks (passage-level RAG retrieval), or hidden (default: keyword)",
     )
     args = parser.parse_args()
 
     if not args.query and not args.path:
         parser.error("Provide --query or --path")
+
+    # Chunk retrieval runs against the DuckDB chunk store, not the graph.
+    if args.mode == "chunks":
+        display_chunks(search_chunks(args.query, args.limit))
+        return
 
     graph = Graph()
     try:

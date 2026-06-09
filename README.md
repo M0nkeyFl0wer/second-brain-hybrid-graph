@@ -60,7 +60,8 @@ non-trivial local LLM run to exercise).
 | **Ingest** (vault / folder) | `scripts/ingest_obsidian.py`, `scripts/ingest_folder.py` | ✅ core |
 | **Typed graph** (LadybugDB) | `second_brain/graph.py` | ✅ core |
 | **Inspect** | `python -m second_brain.check` | ✅ core |
-| **Search** (vector / keyword / hybrid / path) | `scripts/search_cli.py` | ✅ core |
+| **Search** (vector / keyword / hybrid / path / chunks) | `scripts/search_cli.py` | ✅ core |
+| **Chunk store** (DuckDB: BM25 + HNSW + RRF) | `second_brain/chunk_store.py`, `second_brain/pipeline/chunks.py` | ✅ core |
 | **Topology analysis** | `scripts/run_analysis.py`, `second_brain/topology.py` | ✅ core |
 | **Visualize** (NetworkX → pyvis + homology) | `scripts/visualize.py` | ✅ core |
 | **Pluggable ontology** (YAML) | `--ontology path.yaml` | ✅ core |
@@ -71,12 +72,16 @@ non-trivial local LLM run to exercise).
 | **MCP server** (AI assistants) | `second_brain/mcp_server.py` | 🧪 experimental |
 | **Web dashboard** | `second_brain/dashboard.py` | 🧪 experimental |
 
-¹ The DuckDB-hybrid enrichment path (chunk store + scheduled re-reads) is the
-stage that most exercises the "hybrid" half. It is currently stale against the
-consolidated `Graph` API and exits with a clear notice rather than running.
-Reconciling it is the next milestone. Until then, **the core stores entities,
-edges, and *entity* embeddings in LadybugDB**; the DuckDB *chunk* store is wired
-into the experimental enrichment loop, not the core ingest.
+¹ **The DuckDB chunk store is now populated by core ingest.** Both ingest paths
+chunk each document, embed the chunks (best-effort — chunks still land
+BM25-searchable if the embed backend is down), and write them to
+`data/chunks.duckdb`. Query it with `search_cli.py --mode chunks` for
+passage-level hybrid retrieval (BM25 + HNSW + RRF fusion) — this is the
+substrate a RAG answer grounds in. So **the graph holds entities, edges, and
+*entity* embeddings in LadybugDB; the chunk store holds the source *passages*
+and their embeddings.** What remains experimental is the *scheduled enrichment
+loop* (`enrich.py` — periodic re-reads / re-embeds over time), not the chunk
+substrate itself.
 
 ---
 

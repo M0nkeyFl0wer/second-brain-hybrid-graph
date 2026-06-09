@@ -16,6 +16,8 @@ from second_brain.graph import Graph
 from second_brain.extract import Extractor
 from second_brain.embed import embed_text, embed_batch
 from second_brain.ontology import Ontology
+from second_brain.chunk_store import ChunkStore
+from second_brain.pipeline.chunks import ingest_document_chunks
 from second_brain.pipeline.resolve import canonicalize_extracted_graph
 from second_brain import config
 
@@ -84,19 +86,6 @@ def read_document(path: Path) -> str:
     return ""
 
 
-def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[str]:
-    """Split text into overlapping chunks for embedding."""
-    if not text.strip():
-        return []
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + chunk_size
-        chunks.append(text[start:end])
-        start = end - overlap
-    return chunks
-
-
 def main():
     ingest_dir = getattr(config, "INGEST_DIR", __import__("pathlib").Path("ingest"))
     if not ingest_dir.exists():
@@ -119,6 +108,8 @@ def main():
 
     ontology = Ontology()
     graph = Graph(ontology=ontology)
+    chunk_store = ChunkStore(config.CHUNK_STORE_PATH, embedding_dim=config.EMBEDDING_DIM)
+    chunk_store.init_schema()
     try:
         extractor = Extractor(ontology)
 
@@ -147,15 +138,20 @@ def main():
                 f"  Extracted: {len(result['entities'])} entities, " f"{len(result['edges'])} edges"
             )
 
-            # Compute embeddings for chunks
-            chunks = chunk_text(text)
-            if chunks:
-                embed_batch(chunks)
-                total_chunks += len(chunks)
-                print(f"  Embedded: {len(chunks)} chunks")
-
-                # Store chunk embeddings on the entities they mention
-                # (For now, embed entity descriptions directly after bulk load)
+            # Chunk the document into the DuckDB chunk store for hybrid
+            # (BM25 + HNSW) retrieval. Best-effort embedding — chunks still
+            # land (BM25-searchable) if the embed backend is down.
+            written = ingest_document_chunks(
+                chunk_store,
+                doc_id=doc_id,
+                source_uri=source_url,
+                title=filepath.stem,
+                text=text,
+                embed_batch_fn=embed_batch,
+            )
+            total_chunks += written
+            if written:
+                print(f"  Chunked: {written} chunks → chunk store")
 
             all_entities.extend(result["entities"])
             all_edges.extend(result["edges"])
@@ -218,8 +214,15 @@ def main():
             for type_name, count in list(rejections.items())[:10]:
                 print(f"  {type_name}: {count} rejections")
             print("  Tip: Consider adding frequently rejected types to ONTOLOGY.md")
+
+        chunk_stats = chunk_store.get_stats()
+        print(
+            f"  Chunk store:         {chunk_stats['total_chunks']} chunks "
+            f"({chunk_stats['embedded_chunks']} embedded) → {config.CHUNK_STORE_PATH.name}"
+        )
     finally:
         graph.close()
+        chunk_store.close()
 
 
 if __name__ == "__main__":

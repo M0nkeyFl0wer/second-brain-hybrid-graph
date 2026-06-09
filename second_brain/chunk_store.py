@@ -74,25 +74,32 @@ class ChunkStore:
         return self._ro
 
     def _open_mem(self) -> duckdb.DuckDBPyConnection:
-        """Open in-memory handle for HNSW queries (built from on-disk data at boot)."""
+        """Open in-memory handle for HNSW queries (built from on-disk data at boot).
+
+        Embeddings are pulled through the already-open read-only handle as Arrow
+        and materialized in memory. We deliberately do NOT ``ATTACH`` the file
+        here: the persistent ``_ro`` handle already holds it open, and DuckDB
+        forbids attaching a file that another connection in the same process has
+        open as its main database ("Unique file handle conflict").
+        """
         if self._mem is None:
-            self._mem = duckdb.connect(":memory:")
-            self._mem.execute("LOAD vss;")
-            self._mem.execute("SET hnsw_enable_experimental_persistence = true;")
-            # Attach the persistent DB and copy embeddings to in-memory for HNSW
-            self._mem.execute(f"ATTACH '{self.db_path}' AS disk (dbtype duckdb);")
-            # HNSW index built in-memory at boot for fast queries
-            self._mem.execute("""
-                CREATE TABLE chunk_vec AS
-                SELECT id, embedding FROM disk.chunk
-                WHERE embedding IS NOT NULL;
-            """)
-            self._mem.execute("""
+            mem = duckdb.connect(":memory:")
+            mem.execute("LOAD vss;")
+            # Pull embeddings via the existing read-only handle (no 2nd file handle).
+            ro = self._open_ro()
+            vec_arrow = ro.execute(
+                "SELECT id, embedding FROM chunk WHERE embedding IS NOT NULL"
+            ).arrow()
+            mem.register("chunk_vec_src", vec_arrow)
+            mem.execute("CREATE TABLE chunk_vec AS SELECT * FROM chunk_vec_src;")
+            mem.unregister("chunk_vec_src")
+            # HNSW index built in-memory for fast cosine queries.
+            mem.execute("""
                 CREATE INDEX chunk_emb_hnsw ON chunk_vec
                 USING HNSW (embedding)
                 WITH (metric='cosine', ef_construction=200, M=32);
             """)
-            self._mem.execute("DETACH disk;")
+            self._mem = mem
         return self._mem
 
     def _open_rw(self) -> duckdb.DuckDBPyConnection:
@@ -188,7 +195,10 @@ class ChunkStore:
                     "sensitivity": c.get("sensitivity", "public"),
                     "created_at": datetime.now(timezone.utc),
                     "source_mtime": c.get("source_mtime"),
-                    "embedded_at": c.get("embedded_at"),
+                    # Stamp embedded_at whenever an embedding is present so
+                    # get_stats() reflects embedding coverage accurately.
+                    "embedded_at": c.get("embedded_at")
+                    or (datetime.now(timezone.utc) if c.get("embedding") is not None else None),
                 }
                 for c in chunks
             ]
@@ -359,13 +369,16 @@ class ChunkStore:
                 for rank, r in enumerate(rows, 1)
             ]
 
-        # ANN via in-memory handle (HNSW)
+        # ANN via in-memory handle (HNSW). Cast the query vector to FLOAT[dim]
+        # to match the column type — a Python list binds as DOUBLE[] otherwise
+        # and array_cosine_distance has no FLOAT[]/DOUBLE[] overload.
         mem = self._open_mem()
+        cast = f"CAST(? AS FLOAT[{self.embedding_dim}])"
         ann_results = mem.execute(
-            """
-            SELECT id, ROW_NUMBER() OVER (ORDER BY array_cosine_distance(embedding, ?)) AS rank
+            f"""
+            SELECT id, ROW_NUMBER() OVER (ORDER BY array_cosine_distance(embedding, {cast})) AS rank
             FROM chunk_vec
-            ORDER BY array_cosine_distance(embedding, ?)
+            ORDER BY array_cosine_distance(embedding, {cast})
             LIMIT 50;
         """,
             [query_embedding, query_embedding],

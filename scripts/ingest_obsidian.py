@@ -13,9 +13,11 @@ sys.path.insert(0, ".")
 
 from second_brain.graph import Graph
 from second_brain.extract import Extractor
-from second_brain.embed import embed_text
+from second_brain.embed import embed_text, embed_batch
 from second_brain.ontology import slugify
 from second_brain.obsidian import scan_vault
+from second_brain.chunk_store import ChunkStore
+from second_brain.pipeline.chunks import ingest_document_chunks
 from second_brain.pipeline.resolve import canonicalize_extracted_graph
 from second_brain import config
 
@@ -83,6 +85,8 @@ def main():
     else:
         print("Ontology: built-in SecondBrainOntology (default)")
     graph = Graph(ontology=ontology)
+    chunk_store = ChunkStore(config.CHUNK_STORE_PATH, embedding_dim=config.EMBEDDING_DIM)
+    chunk_store.init_schema()
     try:
         extractor = Extractor(ontology)
 
@@ -133,6 +137,17 @@ def main():
 
             # Register document
             graph.add_document(note["doc_id"], note["path"], note["title"])
+
+            # Chunk the note body into the DuckDB chunk store for hybrid
+            # (BM25 + HNSW) retrieval. Best-effort embedding.
+            ingest_document_chunks(
+                chunk_store,
+                doc_id=note["doc_id"],
+                source_uri=note["path"],
+                title=note["title"],
+                text=note["body"],
+                embed_batch_fn=embed_batch,
+            )
 
             if result.get("_error"):
                 extract_failures += 1
@@ -263,6 +278,11 @@ def main():
         print(f"  Total entities:      {graph.entity_count()}")
         print(f"  Total edges:         {edge_count}")
         print(f"  Total documents:     {graph.document_count()}")
+        chunk_stats = chunk_store.get_stats()
+        print(
+            f"  Chunk store:         {chunk_stats['total_chunks']} chunks "
+            f"({chunk_stats['embedded_chunks']} embedded)"
+        )
         print("\nNext steps:")
         print("  Search:    python scripts/search_cli.py -q 'your query'")
         print("  Analyze:   python scripts/run_analysis.py")
@@ -279,6 +299,7 @@ def main():
             print("  Tip: Consider adding frequently rejected types to ONTOLOGY.md")
     finally:
         graph.close()
+        chunk_store.close()
 
 
 if __name__ == "__main__":

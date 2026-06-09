@@ -14,6 +14,11 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # Where the graph database lives (LadybugDB directory)
 GRAPH_DIR = _PROJECT_ROOT / "data" / "graph.lbug"
 
+# Where the DuckDB chunk store lives (document chunks + embeddings + FTS/HNSW
+# for chunk-level hybrid retrieval). Sits alongside the graph; the graph holds
+# entities/edges, this holds the source text chunks they were extracted from.
+CHUNK_STORE_PATH = _PROJECT_ROOT / "data" / "chunks.duckdb"
+
 # Path to your Obsidian vault (required for vault ingestion)
 VAULT_PATH = ""  # e.g., "~/obsidian-vault" or "~/Documents/SecondBrain"
 
