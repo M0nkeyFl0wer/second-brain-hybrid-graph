@@ -15,7 +15,7 @@ set -uo pipefail
 
 payload="$(cat)"
 
-export PYTHONPATH="${KG_COMMON_PATH:-/home/user/Projects/kg-common}${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="${KG_COMMON_PATH:-$HOME/Projects/kg-common}${PYTHONPATH:+:$PYTHONPATH}"
 
 PY="${KG_HARNESS_PYTHON:-}"
 if [ -z "$PY" ]; then

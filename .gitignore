@@ -1,3 +1,15 @@
+# Session handoff docs (local working notes — never public)
+HANDOFF.md
+
+# Local archive of material removed from the public history
+.archive/
+
+# Tool caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.benchmarks/
+
 # Data (never commit personal notes or graph data)
 data/
 /ingest/

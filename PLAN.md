@@ -25,7 +25,6 @@ next_step: Build `scripts/onboard.py` (interactive edge-type selection) and `scr
 | `scripts/enrich.py` | ✅ Done | Nightly LLM pass, every 4h via systemd timer |
 | `scripts/health_check.py` | ✅ Done | Graph + chunk observability, every 15min via systemd timer |
 | `systemd/` | ✅ Done | Enrich + health timers with OOMScoreAdjust=-200 |
-| `docs/hardening.md` | ✅ Done | Copied from ~/Projects/security-hardening-2026-01-28.md |
 | `config/edge_types.json` | ✅ Done | Empty config (user fills via onboard.py) |
 | `scripts/onboard.py` | ⬜ Todo | Interactive edge-type selection |
 | `scripts/smoke_test.py` | ⬜ Todo | Pipeline smoke tests |
@@ -88,8 +87,7 @@ open-second-brain/
 │   └── graph_queue.jsonl    # Write queue (never direct to graph)
 ├── docs/
 │   ├── ONTOLOGY.md          # Entity/edge type documentation
-│   ├── ACTIVE_STACK.md      # Pipeline stages + services
-│   └── hardening.md         # Copied from ~/Projects/security-hardening-2026-01-28.md
+│   └── ACTIVE_STACK.md      # Pipeline stages + services
 ├── tests/
 │   └── fixture_corpus/      # SME validation corpus
 ├── .mcp/                    # MCP server config (rag_search, rag_query_graph, etc.)
@@ -246,7 +244,6 @@ file change → chunk → embed → extract triplets → write to graph
 
 - ONTOLOGY.md — entity/edge type reference
 - ACTIVE_STACK.md — pipeline stages + services
-- hardening.md — copied from ~/Projects/security-hardening-2026-01-28.md
 
 ---
 
@@ -254,7 +251,6 @@ file change → chunk → embed → extract triplets → write to graph
 
 ```
 Week 1: Foundation
-├── Copy hardening doc
 ├── Create DuckDB schema + chunk_store.py
 ├── Create LadybugDB schema + graph.py
 ├── Implement ATTACH bridge

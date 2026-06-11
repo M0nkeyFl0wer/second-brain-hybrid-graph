@@ -181,8 +181,8 @@ def extract_triplets_openai(
 ) -> dict[str, Any]:
     """Extract triplets via an OpenAI-compatible /v1/chat/completions endpoint.
 
-    Backend-agnostic: works with any OpenAI-compatible server ([vendor],
-    Together, Groq, vLLM, a local OpenAI-shim, etc.). Selected when
+    Backend-agnostic: works with any OpenAI-compatible server (Together,
+    Groq, vLLM, a local OpenAI-shim, etc.). Selected when
     PRIVACY_MODE is "hybrid"/"remote" and a remote base is configured — the
     extraction (not embedding) leaves the machine. Same prompt and same
     fail-loud `_error` contract as the local path.

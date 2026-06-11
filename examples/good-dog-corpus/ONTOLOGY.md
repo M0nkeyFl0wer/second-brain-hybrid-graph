@@ -158,8 +158,8 @@ The attrition this produces is measured and consistent across extraction backend
 
 | Extraction backend | Edges proposed | Edges persisted | Dropped |
 |---|---|---|---|
-| qwen3:14b (remote-gpu-host) | 547 | 143 | ~74% |
-| gemma3:12b (remote-gpu-host) | 304 | 59 | ~81% |
+| qwen3:14b (remote GPU) | 547 | 143 | ~74% |
+| gemma3:12b (remote GPU) | 304 | 59 | ~81% |
 
 **This is the ontology working as designed, not a bug.** The sparse, high-confidence graph is the deliberate output of a precision-first schema built to test phantom-edge detection. It sits at the opposite end of the spectrum from the repo's *built-in default* ontology (root `ONTOLOGY.md`), which keeps permissive `*`-direction associative edges (`ASSOCIATED_WITH`, `SUPPORTS`, `CONFLICTS_WITH`) and so yields a denser, lower-precision graph.
 

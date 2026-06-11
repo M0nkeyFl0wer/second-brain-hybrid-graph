@@ -24,7 +24,7 @@ Usage:
     python scripts/connect_orphans.py --ontology examples/good-dog-corpus/ontology.yaml
     # remote backend (set the same env as ingest):
     SECONDBRAIN_API_KEY=... SECOND_BRAIN_PRIVACY_MODE=hybrid \
-    REMOTE_API_BASE=https://api.example.com REMOTE_MODEL=google/gemma-4-31B-it \
+    REMOTE_API_BASE=https://api.example.com REMOTE_MODEL=provider/model-name \
     python scripts/connect_orphans.py --ontology examples/good-dog-corpus/ontology.yaml --workers 8
 """
 

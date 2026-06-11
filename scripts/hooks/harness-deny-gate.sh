@@ -18,7 +18,7 @@ set -uo pipefail
 
 payload="$(cat)"
 
-export PYTHONPATH="${KG_COMMON_PATH:-/home/user/Projects/kg-common}${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="${KG_COMMON_PATH:-$HOME/Projects/kg-common}${PYTHONPATH:+:$PYTHONPATH}"
 : "${KG_HARNESS_GATE_POLICY:=${CLAUDE_PROJECT_DIR:-.}/scripts/hooks/harness-gate-policy.json}"
 export KG_HARNESS_GATE_POLICY
 

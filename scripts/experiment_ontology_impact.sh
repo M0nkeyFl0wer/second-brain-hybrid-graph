@@ -15,7 +15,7 @@ cd "$(dirname "$0")/.." || exit 1
 PY=.venv/bin/python
 VAULT=examples/good-dog-corpus/vault
 ONTO=examples/good-dog-corpus/ontology.yaml
-SME=/home/user/Projects/multipass-structural-memory-eval/.venv/bin/sme-eval
+SME="${SME_EVAL:-sme-eval}"
 EXP=data/exp
 mkdir -p "$EXP"
 LOG="$EXP/run.log"
